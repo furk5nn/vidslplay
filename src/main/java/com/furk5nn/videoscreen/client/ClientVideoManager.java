@@ -45,8 +45,6 @@ public final class ClientVideoManager {
     }
 
     private static void message(String text) {
-        if (Minecraft.getInstance().player != null) {
-            Minecraft.getInstance().player.displayClientMessage(Component.literal(text), true);
-        }
+        System.out.println("[VideoScreen] " + text);
     }
 }
