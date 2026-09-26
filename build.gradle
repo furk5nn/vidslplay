@@ -9,46 +9,23 @@ group = mod_group_id
 
 repositories {
     mavenCentral()
-    exclusiveContent {
-        forRepository {
-            maven {
-                name = "Modrinth"
-                url = "https://api.modrinth.com/maven"
-            }
-        }
-        filter {
-            includeGroup "maven.modrinth"
-        }
-    }
-}
-
-configurations {
-    embed
+    maven { url = "https://www.cursemaven.com" }
 }
 
 dependencies {
-    // MCEF NeoForge 1.21.4. We embed it and drive its Chromium runtime ourselves.
-    implementation "maven.modrinth:TObQ0HxZ:ZGUPVQmF"
-    embed "maven.modrinth:TObQ0HxZ:ZGUPVQmF"
+    // Rinku is the actively maintained MCEF/Chromium fork for Minecraft 26.2.
+    implementation "curse.maven:rinku-1366156:8745405"
 }
 
-base {
-    archivesName = mod_id
-}
+base { archivesName = mod_id }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
 neoForge {
     version = project.neo_version
-
-    runs {
-        client { client() }
-    }
-
+    runs { client { client() } }
     mods {
-        "${mod_id}" {
-            sourceSet(sourceSets.main)
-        }
+        "${mod_id}" { sourceSet(sourceSets.main) }
     }
 }
 
@@ -70,16 +47,4 @@ def generateModMetadata = tasks.register('generateModMetadata', ProcessResources
 sourceSets.main.resources.srcDir generateModMetadata
 neoForge.ideSyncTask generateModMetadata
 
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = 'UTF-8'
-}
-
-tasks.named('jar', Jar).configure {
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from {
-        configurations.embed.collect { it.isDirectory() ? it : zipTree(it) }
-    }
-    exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
-    // Keep this mod's own NeoForge metadata; do not import MCEF's old 1.21.4 mod descriptor.
-    exclude 'META-INF/neoforge.mods.toml'
-}
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
