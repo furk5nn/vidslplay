@@ -4,7 +4,6 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.jcodec.api.FrameGrab;
-import org.jcodec.api.JCodecException;
 import org.jcodec.scale.AWTUtil;
 import org.jcodec.common.io.NIOUtils;
 import org.jcodec.common.model.Picture;
@@ -54,12 +53,7 @@ public final class LocalVideoPlayer implements AutoCloseable {
                 continue;
             }
             long started = System.nanoTime();
-            Picture picture;
-            try {
-                picture = grab.getNativeFrame();
-            } catch (JCodecException e) {
-                break;
-            }
+            Picture picture = grab.getNativeFrame();
             if (picture == null) break;
             BufferedImage image = AWTUtil.toBufferedImage(picture);
             texture.submit(toRgba(image), image.getWidth(), image.getHeight());
