@@ -5,7 +5,7 @@ import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.jcodec.api.FrameGrab;
 import org.jcodec.api.JCodecException;
-import org.jcodec.api.awt.AWTUtil;
+import org.jcodec.javase.scale.AWTUtil;
 import org.jcodec.common.io.NIOUtils;
 import org.jcodec.common.model.Picture;
 
