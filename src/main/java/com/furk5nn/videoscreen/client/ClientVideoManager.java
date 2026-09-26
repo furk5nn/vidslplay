@@ -1,6 +1,6 @@
 package com.furk5nn.videoscreen.client;
 
-import com.cinemamod.mcef.MCEF;
+import de.keksuccino.rinku.Rinku;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
@@ -27,7 +27,7 @@ public final class ClientVideoManager {
             return;
         }
 
-        if (!MCEF.isInitialized()) {
+        if (!Rinku.isInitialized()) {
             message("Rinku/Chromium is still initializing. Try again in a few seconds.");
             return;
         }
