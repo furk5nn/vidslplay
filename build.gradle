@@ -9,6 +9,17 @@ group = mod_group_id
 
 repositories {
     mavenCentral()
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = "Modrinth"
+                url = "https://api.modrinth.com/maven"
+            }
+        }
+        filter {
+            includeGroup "maven.modrinth"
+        }
+    }
 }
 
 configurations {
@@ -16,10 +27,9 @@ configurations {
 }
 
 dependencies {
-    implementation "org.jcodec:jcodec:0.2.5"
-    implementation "org.jcodec:jcodec-javase:0.2.5"
-    embed "org.jcodec:jcodec:0.2.5"
-    embed "org.jcodec:jcodec-javase:0.2.5"
+    // MCEF NeoForge 1.21.4. We embed it and drive its Chromium runtime ourselves.
+    implementation "maven.modrinth:TObQ0HxZ:ZGUPVQmF"
+    embed "maven.modrinth:TObQ0HxZ:ZGUPVQmF"
 }
 
 base {
@@ -70,4 +80,6 @@ tasks.named('jar', Jar).configure {
         configurations.embed.collect { it.isDirectory() ? it : zipTree(it) }
     }
     exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+    // Keep this mod's own NeoForge metadata; do not import MCEF's old 1.21.4 mod descriptor.
+    exclude 'META-INF/neoforge.mods.toml'
 }
