@@ -1,7 +1,7 @@
 package com.furk5nn.videoscreen.client;
 
-import com.cinemamod.mcef.MCEF;
-import com.cinemamod.mcef.MCEFBrowser;
+import de.keksuccino.rinku.Rinku;
+import de.keksuccino.rinku.RinkuBrowser;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -12,7 +12,7 @@ import net.minecraft.resources.Identifier;
 public final class ChromiumVideoPlayer implements AutoCloseable {
     private final File source;
     private final Path htmlFile;
-    private MCEFBrowser browser;
+    private RinkuBrowser browser;
     private boolean paused;
     private int width;
     private int height;
@@ -44,14 +44,14 @@ public final class ChromiumVideoPlayer implements AutoCloseable {
             """.formatted(videoUri);
         Files.writeString(htmlFile, html, StandardCharsets.UTF_8);
 
-        if (!MCEF.isInitialized()) {
-            throw new IllegalStateException("Rinku/MCEF is not initialized yet");
+        if (!Rinku.isInitialized()) {
+            throw new IllegalStateException("Rinku is not initialized yet");
         }
 
         this.width = Math.max(320, width);
         this.height = Math.max(180, height);
-        browser = MCEF.createBrowser(htmlFile.toUri().toASCIIString(), false, this.width, this.height);
-        browser.useBrowserControls(false);
+        browser = Rinku.createBrowser(htmlFile.toUri().toASCIIString(), false);
+        browser.resize(this.width, this.height);
         browser.setFocus(false);
     }
 
@@ -66,7 +66,7 @@ public final class ChromiumVideoPlayer implements AutoCloseable {
     }
 
     public boolean isReady() {
-        return browser != null && browser.isTextureReady();
+        return browser != null && browser.getTextureIdentifier() != null;
     }
 
     public Identifier texture() {
