@@ -21,3 +21,11 @@ type="required"
 versionRange="${minecraft_version_range}"
 ordering="NONE"
 side="BOTH"
+
+
+[[dependencies.${mod_id}]]
+modId="rinku"
+type="required"
+versionRange="[3.0.4,)"
+ordering="BEFORE"
+side="CLIENT"
