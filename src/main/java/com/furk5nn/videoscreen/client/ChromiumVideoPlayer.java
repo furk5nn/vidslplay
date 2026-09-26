@@ -14,12 +14,14 @@ public final class ChromiumVideoPlayer implements AutoCloseable {
     private final Path htmlFile;
     private MCEFBrowser browser;
     private boolean paused;
+    private int width;
+    private int height;
 
     public ChromiumVideoPlayer(File source, int width, int height) throws IOException {
         this.source = source;
         this.htmlFile = Files.createTempFile("videoscreen-", ".html");
 
-        String videoUri = source.toURI().toASCIIString().replace("&", "&amp;").replace(""", "&quot;");
+        String videoUri = source.toURI().toASCIIString().replace("&", "&amp;").replace("\"", "&quot;");
         String html = """
             <!doctype html>
             <html>
@@ -46,13 +48,21 @@ public final class ChromiumVideoPlayer implements AutoCloseable {
             throw new IllegalStateException("Rinku/MCEF is not initialized yet");
         }
 
-        browser = MCEF.createBrowser(htmlFile.toUri().toASCIIString(), false, Math.max(320, width), Math.max(180, height));
+        this.width = Math.max(320, width);
+        this.height = Math.max(180, height);
+        browser = MCEF.createBrowser(htmlFile.toUri().toASCIIString(), false, this.width, this.height);
         browser.useBrowserControls(false);
         browser.setFocus(false);
     }
 
     public void resize(int width, int height) {
-        if (browser != null) browser.resize(Math.max(320, width), Math.max(180, height));
+        int newWidth = Math.max(320, width);
+        int newHeight = Math.max(180, height);
+        if (browser != null && (newWidth != this.width || newHeight != this.height)) {
+            this.width = newWidth;
+            this.height = newHeight;
+            browser.resize(newWidth, newHeight);
+        }
     }
 
     public boolean isReady() {
