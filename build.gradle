@@ -23,7 +23,7 @@ repositories {
 }
 
 dependencies {
-    implementation "maven.modrinth:watermedia:3.0.0.23"
+    implementation "maven.modrinth:G922NeHS:FdCZ5Rxq"
 }
 
 base { archivesName = mod_id }
