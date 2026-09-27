@@ -169,6 +169,50 @@ for java in (DST / "src/main/java").rglob("*.java"):
     java.write_text(s, encoding="utf-8")
 
 
+
+# The old NeoForge dynamic model-data API used by WebDisplays 1.20/1.21 was
+# removed in 26.2. Keep the original 16 screen textures, but move adjacency
+# selection to the screen renderer. During the port build the block model is a
+# seam-free neutral screen surface instead of resurrecting dead ModelData APIs.
+for obsolete in [
+    "src/main/java/net/montoyo/wd/client/renderers/ScreenBaker.java",
+    "src/main/java/net/montoyo/wd/client/renderers/ScreenThinBaker.java",
+    "src/main/java/net/montoyo/wd/client/renderers/ScreenModelLoader.java",
+    "src/main/java/net/montoyo/wd/client/renderers/ScreenThinModelLoader.java",
+]:
+    p = DST / obsolete
+    if p.exists():
+        p.unlink()
+
+client_proxy = DST / "src/main/java/net/montoyo/wd/client/ClientProxy.java"
+if client_proxy.exists():
+    s = client_proxy.read_text(encoding="utf-8")
+    s = re.sub(
+        r"\\s*public static void onModelRegistryEvent\\(ModelEvent\\.RegisterGeometryLoaders event\\) \\{.*?\\n\\s*\\}",
+        "",
+        s,
+        flags=re.S
+    )
+    s = s.replace("import net.neoforged.neoforge.client.event.ModelEvent;\\n", "")
+    s = s.replace("import net.montoyo.wd.client.renderers.ScreenModelLoader;\\n", "")
+    s = s.replace("import net.montoyo.wd.client.renderers.ScreenThinModelLoader;\\n", "")
+    client_proxy.write_text(s, encoding="utf-8")
+
+# A plain center texture removes per-block interior bezels. The panel renderer
+# later adds the original outer frame once per active multiblock.
+model_dir = DST / "src/main/resources/assets/webdisplays/models/block"
+(model_dir / "screen.json").write_text("""{
+  "parent": "minecraft:block/cube_all",
+  "textures": { "all": "webdisplays:block/screen0" }
+}
+""", encoding="utf-8")
+(model_dir / "screen_thin.json").write_text("""{
+  "parent": "minecraft:block/cube_all",
+  "textures": { "all": "webdisplays:block/screen0" }
+}
+""", encoding="utf-8")
+
+
 # Current resource metadata.
 (DST / "src/main/resources/pack.mcmeta").write_text("""{
   "pack": {
