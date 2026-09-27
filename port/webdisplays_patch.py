@@ -680,6 +680,316 @@ if client_proxy.exists():
 
     client_proxy.write_text(s, encoding="utf-8")
 
+
+# 26.2 browser-texture bridge. MCEF owns the native GL texture; Minecraft only
+# gets a non-owning GpuTexture view so the normal submit pipeline can sample it.
+render_dir = DST / "src/main/java/net/montoyo/wd/client/renderers"
+(render_dir / "BrowserTextureBridge.java").write_text("""package net.montoyo.wd.client.renderers;
+
+import com.cinemamod.mcef.MCEFBrowser;
+import com.mojang.blaze3d.GpuFormat;
+import com.mojang.blaze3d.opengl.FrameBufferCache;
+import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.blaze3d.textures.GpuTexture;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.minecraft.resources.Identifier;
+
+import java.util.WeakHashMap;
+
+final class BrowserTextureBridge {
+    private static final WeakHashMap<MCEFBrowser, Entry> ENTRIES = new WeakHashMap<>();
+
+    private BrowserTextureBridge() {}
+
+    static Identifier texture(MCEFBrowser browser, int width, int height) {
+        if (browser == null || browser.getRenderer() == null) return null;
+        int nativeId = browser.getRenderer().getTextureID();
+        if (nativeId <= 0) return null;
+
+        Entry old = ENTRIES.get(browser);
+        if (old != null && old.nativeId == nativeId) return old.identifier;
+
+        Minecraft mc = Minecraft.getInstance();
+        if (old != null) mc.getTextureManager().release(old.identifier);
+
+        Identifier identifier = Identifier.fromNamespaceAndPath(
+                "webdisplays",
+                "mcef/screen_" + Integer.toUnsignedString(System.identityHashCode(browser))
+        );
+        ExternalTexture texture = new ExternalTexture(nativeId, Math.max(1, width), Math.max(1, height));
+        mc.getTextureManager().register(identifier, texture);
+        ENTRIES.put(browser, new Entry(nativeId, identifier));
+        return identifier;
+    }
+
+    private record Entry(int nativeId, Identifier identifier) {}
+
+    private static final class ExternalTexture extends AbstractTexture {
+        ExternalTexture(int nativeId, int width, int height) {
+            ForeignGlTexture foreign = new ForeignGlTexture(nativeId, width, height);
+            this.texture = foreign;
+            this.textureView = RenderSystem.getDevice().createTextureView(foreign);
+            this.sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+        }
+
+        @Override
+        public void close() {
+            var oldView = this.textureView;
+            var oldTexture = this.texture;
+            this.textureView = null;
+            this.texture = null;
+            this.sampler = null;
+            if (oldView != null) {
+                try { oldView.close(); } catch (Throwable ignored) {}
+            }
+            if (oldTexture != null) {
+                try { oldTexture.close(); } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    private static final class ForeignGlTexture extends GlTexture {
+        private static final FrameBufferCache FRAMEBUFFER_CACHE = new FrameBufferCache();
+        private boolean disposed;
+
+        ForeignGlTexture(int nativeId, int width, int height) {
+            super(
+                    GpuTexture.USAGE_TEXTURE_BINDING,
+                    "webdisplays-mcef-screen",
+                    GpuFormat.RGBA8_UNORM,
+                    width,
+                    height,
+                    1,
+                    1,
+                    nativeId,
+                    FRAMEBUFFER_CACHE
+            );
+        }
+
+        @Override
+        public void close() {
+            // Native texture belongs to MCEF.
+            disposed = true;
+        }
+
+        @Override
+        public boolean isClosed() {
+            return disposed;
+        }
+    }
+}
+""", encoding="utf-8")
+
+# Full 26.2 state/extract/submit screen renderer.
+(render_dir / "ScreenRenderer.java").write_text("""package net.montoyo.wd.client.renderers;
+
+import com.cinemamod.mcef.MCEFBrowser;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
+import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
+import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
+import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.phys.Vec3;
+import net.montoyo.wd.WebDisplays;
+import net.montoyo.wd.config.ClientConfig;
+import net.montoyo.wd.entity.ScreenBlockEntity;
+import net.montoyo.wd.entity.ScreenData;
+import net.montoyo.wd.utilities.data.BlockSide;
+import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import static com.mojang.math.Axis.*;
+
+public final class ScreenRenderer implements BlockEntityRenderer<ScreenBlockEntity, ScreenRenderer.State> {
+    public ScreenRenderer(BlockEntityRendererProvider.Context context) {}
+
+    public static final class State extends BlockEntityRenderState {
+        final List<Entry> entries = new ArrayList<>();
+    }
+
+    private record Entry(
+            BlockSide side,
+            int width,
+            int height,
+            float rotation,
+            float turnOnScale,
+            Identifier texture,
+            float brightness
+    ) {}
+
+    @Override
+    public State createRenderState() {
+        return new State();
+    }
+
+    @Override
+    public void extractRenderState(
+            ScreenBlockEntity be,
+            State state,
+            float partialTick,
+            Vec3 cameraPosition,
+            ModelFeatureRenderer.@Nullable CrumblingOverlay breakProgress) {
+        BlockEntityRenderer.super.extractRenderState(be, state, partialTick, cameraPosition, breakProgress);
+        state.entries.clear();
+        if (!be.isLoaded()) return;
+
+        for (int i = 0; i < be.screenCount(); i++) {
+            ScreenData screen = be.getScreen(i);
+
+            if (screen.browser == null) {
+                double distance = WebDisplays.PROXY.distanceTo(be, cameraPosition);
+                if (distance <= WebDisplays.INSTANCE.loadDistance2) {
+                    screen.createBrowser(be, true);
+                }
+            }
+
+            if (!(screen.browser instanceof MCEFBrowser browser)) continue;
+            if (browser.getRenderer() == null || browser.getRenderer().getTextureID() <= 0) continue;
+
+            Identifier texture = BrowserTextureBridge.texture(
+                    browser,
+                    screen.rotation.isVertical ? screen.resolution.y : screen.resolution.x,
+                    screen.rotation.isVertical ? screen.resolution.x : screen.resolution.y
+            );
+            if (texture == null) continue;
+
+            float scale = 1.0f;
+            if (screen.doTurnOnAnim) {
+                scale = Math.min(1.0f, Math.max(0.0f,
+                        (System.currentTimeMillis() - screen.turnOnTime) / 100.0f));
+                if (scale >= 1.0f) screen.doTurnOnAnim = false;
+            }
+
+            state.entries.add(new Entry(
+                    screen.side,
+                    screen.size.x,
+                    screen.size.y,
+                    screen.rotation.angle,
+                    scale,
+                    texture,
+                    (float) ClientConfig.screenBrightness
+            ));
+        }
+    }
+
+    @Override
+    public void submit(State state, PoseStack poseStack, SubmitNodeCollector collector, CameraRenderState camera) {
+        for (Entry entry : state.entries) {
+            submitEntry(entry, poseStack, collector);
+        }
+    }
+
+    private static void submitEntry(Entry entry, PoseStack poseStack, SubmitNodeCollector collector) {
+        BlockSide side = entry.side();
+
+        float mx = 0.5f + (side.right.x * entry.width()) * 0.5f
+                           + (side.up.x * entry.height()) * 0.5f
+                           + side.left.x * 0.5f
+                           + side.down.x * 0.5f;
+        float my = 0.5f + (side.right.y * entry.width()) * 0.5f
+                           + (side.up.y * entry.height()) * 0.5f
+                           + side.left.y * 0.5f
+                           + side.down.y * 0.5f;
+        float mz = 0.5f + (side.right.z * entry.width()) * 0.5f
+                           + (side.up.z * entry.height()) * 0.5f
+                           + side.left.z * 0.5f
+                           + side.down.z * 0.5f;
+
+        poseStack.pushPose();
+        poseStack.translate(mx, my, mz);
+
+        switch (side) {
+            case BOTTOM -> poseStack.mulPose(XP.rotationDegrees(139.8f));
+            case TOP -> poseStack.mulPose(XN.rotationDegrees(139.8f));
+            case NORTH -> poseStack.mulPose(YN.rotationDegrees(180.0f));
+            case SOUTH -> {}
+            case WEST -> poseStack.mulPose(YN.rotationDegrees(90.0f));
+            case EAST -> poseStack.mulPose(YP.rotationDegrees(90.0f));
+        }
+
+        if (entry.turnOnScale() < 1.0f) {
+            poseStack.scale(entry.turnOnScale(), entry.turnOnScale(), 1.0f);
+        }
+        if (entry.rotation() != 0.0f) {
+            poseStack.mulPose(ZP.rotationDegrees(entry.rotation()));
+        }
+
+        float sw = entry.width() * 0.5f - 2.0f / 16.0f;
+        float sh = entry.height() * 0.5f - 2.0f / 16.0f;
+        boolean vertical = Math.abs(entry.rotation()) == 90.0f || Math.abs(entry.rotation()) == 270.0f;
+        if (vertical) {
+            float tmp = sw;
+            sw = sh;
+            sh = tmp;
+        }
+
+        final float halfW = sw;
+        final float halfH = sh;
+        final float brightness = entry.brightness();
+
+        collector.submitCustomGeometry(
+                poseStack,
+                RenderTypes.entityTranslucent(entry.texture()),
+                (pose, builder) -> emitScreen(pose, builder, halfW, halfH, brightness)
+        );
+        poseStack.popPose();
+    }
+
+    private static void emitScreen(
+            PoseStack.Pose pose,
+            VertexConsumer builder,
+            float sw,
+            float sh,
+            float brightness) {
+        int c = Math.max(0, Math.min(255, Math.round(brightness * 255.0f)));
+        builder.addVertex(pose, -sw, -sh, 0.505f).setColor(c, c, c, 255).setUv(0.0f, 1.0f);
+        builder.addVertex(pose,  sw, -sh, 0.505f).setColor(c, c, c, 255).setUv(1.0f, 1.0f);
+        builder.addVertex(pose,  sw,  sh, 0.505f).setColor(c, c, c, 255).setUv(1.0f, 0.0f);
+        builder.addVertex(pose, -sw,  sh, 0.505f).setColor(c, c, c, 255).setUv(0.0f, 0.0f);
+    }
+
+    @Override
+    public boolean shouldRenderOffScreen() {
+        return true;
+    }
+
+    @Override
+    public int getViewDistance() {
+        return 256;
+    }
+
+    @Override
+    public boolean shouldRender(ScreenBlockEntity be, Vec3 cameraPos) {
+        return WebDisplays.PROXY.distanceTo(be, cameraPos) <= WebDisplays.INSTANCE.unloadDistance2;
+    }
+}
+""", encoding="utf-8")
+
+stage = render_dir / "ScreenStageRenderer.java"
+if stage.exists():
+    stage.unlink()
+
+# Register the 26.2 renderer provider directly.
+client_proxy = DST / "src/main/java/net/montoyo/wd/client/ClientProxy.java"
+if client_proxy.exists():
+    s = client_proxy.read_text(encoding="utf-8")
+    s = s.replace(
+        "BlockEntityRenderers.register(TileRegistry.SCREEN_BLOCK_ENTITY.get(), new ScreenRenderer.ScreenRendererProvider());",
+        "BlockEntityRenderers.register(TileRegistry.SCREEN_BLOCK_ENTITY.get(), ScreenRenderer::new);"
+    )
+    client_proxy.write_text(s, encoding="utf-8")
+
 # Current resource metadata.
 (DST / "src/main/resources/pack.mcmeta").write_text("""{
   "pack": {
