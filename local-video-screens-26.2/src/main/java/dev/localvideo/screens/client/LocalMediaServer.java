@@ -46,60 +46,40 @@ final class LocalMediaServer implements AutoCloseable {
                 return;
             }
 
-            String mediaMime = mimeType(file.getName());
-            String safeName = escapeHtml(file.getName());
-            String htmlText = """
+            byte[] html = """
                     <!doctype html>
                     <html>
                     <head>
                       <meta charset="utf-8">
                       <style>
-                        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:monospace}
+                        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}
                         video{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
-                        #diag{position:fixed;left:12px;top:12px;z-index:10;max-width:calc(100% - 24px);
-                              padding:8px 10px;background:rgba(0,0,0,.72);font-size:15px;line-height:1.35;
-                              white-space:pre-wrap;pointer-events:none}
                       </style>
                     </head>
                     <body>
-                      <video id="v" autoplay muted playsinline preload="auto" controls src="/media"></video>
-                      <div id="diag">PLAYER PAGE LOADED
-                    file: __FILE__
-                    mime: __MIME__
-                    bytes: __BYTES__
-                    state: waiting for media...</div>
+                      <video id="v" autoplay muted playsinline preload="auto" src="/media"></video>
                       <script>
                         const v=document.getElementById('v');
-                        const d=document.getElementById('diag');
-                        const names={1:'MEDIA_ERR_ABORTED',2:'MEDIA_ERR_NETWORK',3:'MEDIA_ERR_DECODE',4:'MEDIA_ERR_SRC_NOT_SUPPORTED'};
-                        const show=(msg)=>{
-                          const err=v.error ? (names[v.error.code]||('MEDIA_ERROR_'+v.error.code)) : 'none';
-                          d.textContent='PLAYER PAGE LOADED\\n'
-                            +'file: __FILE__\\n'
-                            +'mime: __MIME__\\n'
-                            +'state: '+msg+'\\n'
-                            +'readyState: '+v.readyState+' networkState: '+v.networkState+'\\n'
-                            +'error: '+err+'\\n'
-                            +'currentSrc: '+v.currentSrc;
+                        const unmute=()=>{
+                          try {
+                            v.muted=false;
+                            v.volume=1.0;
+                          } catch(e) {}
                         };
-                        ['loadstart','loadedmetadata','loadeddata','canplay','playing','pause','stalled','suspend','waiting','ended','emptied']
-                          .forEach(e=>v.addEventListener(e,()=>show(e)));
-                        v.addEventListener('error',()=>show('ERROR'));
                         const start=()=>{
-                          show('play() requested');
-                          v.play().then(()=>show('play() resolved')).catch(e=>show('play() rejected: '+e.name+': '+e.message));
+                          const p=v.play();
+                          if(p) p.then(()=>{
+                            setTimeout(unmute, 150);
+                          }).catch(()=>{});
                         };
-                        v.addEventListener('loadeddata', start, {once:true});
+                        v.addEventListener('playing', ()=>setTimeout(unmute, 150));
                         v.addEventListener('canplay', start, {once:true});
+                        v.addEventListener('loadeddata', start, {once:true});
                         start();
                       </script>
                     </body>
                     </html>
-                    """
-                    .replace("__FILE__", safeName)
-                    .replace("__MIME__", mediaMime)
-                    .replace("__BYTES__", Long.toString(file.length()));
-            byte[] html = htmlText.getBytes(StandardCharsets.UTF_8);
+                    """.getBytes(StandardCharsets.UTF_8);
 
             Headers h = exchange.getResponseHeaders();
             h.set("Content-Type", "text/html; charset=utf-8");
@@ -192,13 +172,6 @@ final class LocalMediaServer implements AutoCloseable {
         } finally {
             exchange.close();
         }
-    }
-
-    private static String escapeHtml(String value) {
-        return value.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;");
     }
 
     private static String mimeType(String name) {
