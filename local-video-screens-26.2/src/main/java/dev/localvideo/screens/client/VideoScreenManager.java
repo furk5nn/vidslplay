@@ -49,6 +49,20 @@ public final class VideoScreenManager {
         });
     }
 
+    public boolean openInteraction(net.minecraft.world.level.Level level, net.minecraft.core.BlockPos pos, net.minecraft.core.Direction face) {
+        for (VideoSession session : sessions.values()) {
+            ScreenGeometry geometry = session.geometry();
+            if (!geometry.dimension().equals(level.dimension())) continue;
+            if (geometry.face() != face) continue;
+            if (!geometry.blocks().contains(pos)) continue;
+            if (session.browser() == null) return false;
+
+            Minecraft.getInstance().gui.setScreen(new VideoInteractionScreen(session));
+            return true;
+        }
+        return false;
+    }
+
     private void ensureLoadHandler() {
         if (loadHandlerInstalled) return;
         if (!Rinku.isInitialized()) {
