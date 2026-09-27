@@ -126,6 +126,49 @@ for java in (DST / "src/main/java").rglob("*.java"):
     )
     java.write_text(s, encoding="utf-8")
 
+
+# 26.2 mechanical API migrations shared across the old WebDisplays source.
+for java in (DST / "src/main/java").rglob("*.java"):
+    s = java.read_text(encoding="utf-8")
+
+    # Entity/package moves.
+    s = s.replace("net.minecraft.world.entity.animal.Ocelot", "net.minecraft.world.entity.animal.feline.Ocelot")
+    s = s.replace("net.minecraft.advancements.critereon.", "net.minecraft.advancements.criterion.")
+
+    # Block interaction API collapsed back to InteractionResult in 26.2.
+    s = s.replace("import net.minecraft.world.ItemInteractionResult;\\n", "")
+    s = s.replace("import net.minecraft.world.InteractionResultHolder;\\n", "")
+    s = re.sub(r"\\bItemInteractionResult\\b", "InteractionResult", s)
+    s = re.sub(r"\\bInteractionResultHolder<\\s*ItemStack\\s*>\\b", "InteractionResult", s)
+    s = re.sub(r"InteractionResultHolder\\.success\\([^)]*\\)", "InteractionResult.SUCCESS", s)
+    s = re.sub(r"InteractionResultHolder\\.pass\\([^)]*\\)", "InteractionResult.PASS", s)
+    s = re.sub(r"InteractionResultHolder\\.consume\\([^)]*\\)", "InteractionResult.CONSUME", s)
+
+    # DirectionProperty was folded into EnumProperty<Direction>.
+    s = s.replace("import net.minecraft.world.level.block.state.properties.DirectionProperty;\\n",
+                  "import net.minecraft.world.level.block.state.properties.EnumProperty;\\n")
+    s = re.sub(r"\\bDirectionProperty\\b", "EnumProperty<Direction>", s)
+
+    # Model/render package moves in 26.2.
+    s = s.replace("import net.minecraft.client.renderer.block.model.BakedQuad;",
+                  "import net.minecraft.client.resources.model.geometry.BakedQuad;")
+    s = s.replace("import net.minecraft.client.resources.model.Material;",
+                  "import net.minecraft.client.resources.model.sprite.Material;")
+    s = s.replace("import net.minecraft.client.resources.model.ModelState;",
+                  "import net.minecraft.client.renderer.block.dispatch.ModelState;")
+    s = s.replace("import net.minecraft.world.level.BlockAndTintGetter;",
+                  "import net.minecraft.client.renderer.block.BlockAndTintGetter;")
+    s = s.replace("import net.minecraft.client.renderer.block.model.ItemTransforms;",
+                  "import net.minecraft.client.resources.model.cuboid.ItemTransforms;")
+
+    # 26.2 keeps the same semantic constants on InteractionResult.
+    if "InteractionResult " in s and "import net.minecraft.world.InteractionResult;" not in s:
+        pkg_end = s.find("\\n", s.find("package "))
+        s = s[:pkg_end+1] + "import net.minecraft.world.InteractionResult;\\n" + s[pkg_end+1:]
+
+    java.write_text(s, encoding="utf-8")
+
+
 # Current resource metadata.
 (DST / "src/main/resources/pack.mcmeta").write_text("""{
   "pack": {
