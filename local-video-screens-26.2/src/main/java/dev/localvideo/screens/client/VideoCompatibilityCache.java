@@ -2,15 +2,13 @@ package dev.localvideo.screens.client;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
-import org.bytedeco.ffmpeg.global.avcodec;
-import org.bytedeco.javacv.FFmpegFrameGrabber;
-import org.bytedeco.javacv.FFmpegFrameRecorder;
-import org.bytedeco.javacv.Frame;
 
 import java.io.File;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Locale;
@@ -55,10 +53,16 @@ final class VideoCompatibilityCache {
                     result = cached.toFile();
                 } else {
                     notifyPlayer("Video hazırlanıyor: " + source.getName());
+                    Path ffmpeg = ensureFfmpeg(cacheDir);
                     Path temp = cacheDir.resolve(hash + ".part.webm");
                     Files.deleteIfExists(temp);
-                    transcode(source, temp.toFile());
-                    Files.move(temp, cached);
+
+                    transcode(ffmpeg, source.toPath(), temp);
+                    if (!Files.isRegularFile(temp) || Files.size(temp) == 0) {
+                        throw new IllegalStateException("FFmpeg çıktı üretmedi");
+                    }
+
+                    Files.move(temp, cached, StandardCopyOption.REPLACE_EXISTING);
                     result = cached.toFile();
                     notifyPlayer("Video hazır.");
                 }
@@ -72,53 +76,63 @@ final class VideoCompatibilityCache {
         });
     }
 
-    private static void transcode(File source, File destination) throws Exception {
-        try (FFmpegFrameGrabber grabber = new FFmpegFrameGrabber(source)) {
-            grabber.start();
+    private static Path ensureFfmpeg(Path cacheDir) throws Exception {
+        Path binDir = cacheDir.resolve("bin");
+        Files.createDirectories(binDir);
+        Path exe = binDir.resolve("ffmpeg.exe");
 
-            int width = even(Math.max(2, grabber.getImageWidth()));
-            int height = even(Math.max(2, grabber.getImageHeight()));
-            double sourceFps = grabber.getVideoFrameRate();
-            double fps = sourceFps > 0 ? Math.min(30.0, sourceFps) : 30.0;
-
-            try (FFmpegFrameRecorder recorder = new FFmpegFrameRecorder(
-                    destination,
-                    width,
-                    height,
-                    Math.max(0, grabber.getAudioChannels())
-            )) {
-                recorder.setFormat("webm");
-                recorder.setVideoCodec(avcodec.AV_CODEC_ID_VP9);
-                recorder.setAudioCodec(avcodec.AV_CODEC_ID_OPUS);
-                recorder.setFrameRate(fps);
-                recorder.setVideoBitrate(2_500_000);
-                recorder.setAudioBitrate(128_000);
-                if (grabber.getSampleRate() > 0) {
-                    recorder.setSampleRate(grabber.getSampleRate());
-                }
-
-                // Keep conversion bounded. This is a one-time compatibility cache,
-                // not the playback/render loop.
-                recorder.setVideoOption("threads", "2");
-                recorder.setAudioOption("threads", "1");
-                recorder.setVideoOption("deadline", "realtime");
-                recorder.setVideoOption("cpu-used", "6");
-                recorder.start();
-
-                Frame frame;
-                while ((frame = grabber.grab()) != null) {
-                    recorder.record(frame);
-                }
-
-                recorder.stop();
-            }
-
-            grabber.stop();
+        if (Files.isRegularFile(exe) && Files.size(exe) > 1_000_000) {
+            return exe;
         }
+
+        try (InputStream in = VideoCompatibilityCache.class
+                .getResourceAsStream("/localvideoscreens/ffmpeg/ffmpeg.exe")) {
+            if (in == null) {
+                throw new IllegalStateException("Gömülü ffmpeg.exe bulunamadı");
+            }
+            Path tmp = binDir.resolve("ffmpeg.exe.part");
+            Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
+            Files.move(tmp, exe, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        return exe;
     }
 
-    private static int even(int value) {
-        return (value & 1) == 0 ? value : value - 1;
+    private static void transcode(Path ffmpeg, Path source, Path destination) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(
+                ffmpeg.toAbsolutePath().toString(),
+                "-y",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-threads", "2",
+                "-filter_threads", "2",
+                "-i", source.toAbsolutePath().toString(),
+                "-map", "0:v:0",
+                "-map", "0:a:0?",
+                "-c:v", "libvpx-vp9",
+                "-deadline", "realtime",
+                "-cpu-used", "6",
+                "-row-mt", "1",
+                "-threads", "2",
+                "-b:v", "2500k",
+                "-maxrate", "3500k",
+                "-bufsize", "5000k",
+                "-c:a", "libopus",
+                "-b:a", "128k",
+                "-f", "webm",
+                destination.toAbsolutePath().toString()
+        );
+        pb.redirectErrorStream(true);
+
+        Process process = pb.start();
+        String output;
+        try (InputStream in = process.getInputStream()) {
+            output = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        int exit = process.waitFor();
+        if (exit != 0) {
+            throw new IllegalStateException("FFmpeg exit=" + exit + " " + output);
+        }
     }
 
     private static String sha256(String value) throws Exception {
