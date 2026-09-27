@@ -213,6 +213,13 @@ model_dir = DST / "src/main/resources/assets/webdisplays/models/block"
 """, encoding="utf-8")
 
 
+
+webdisplays_java = DST / "src/main/java/net/montoyo/wd/WebDisplays.java"
+if webdisplays_java.exists():
+    s = webdisplays_java.read_text(encoding="utf-8")
+    s = s.replace("            bus.addListener(ClientProxy::onModelRegistryEvent);\\n", "")
+    webdisplays_java.write_text(s, encoding="utf-8")
+
 # Current resource metadata.
 (DST / "src/main/resources/pack.mcmeta").write_text("""{
   "pack": {
