@@ -21,7 +21,10 @@ public final class ChromiumVideoPlayer implements AutoCloseable {
         this.source = source;
         this.htmlFile = Files.createTempFile("videoscreen-", ".html");
 
-        String videoUri = source.toURI().toASCIIString().replace("&", "&amp;").replace("\"", "&quot;");
+        String videoUri = source.toURI().toASCIIString()
+            .replace("\\", "\\\\")
+            .replace("'", "\\'");
+
         String html = """
             <!doctype html>
             <html>
@@ -33,11 +36,71 @@ public final class ChromiumVideoPlayer implements AutoCloseable {
               </style>
             </head>
             <body>
-              <video id="v" src="%s" autoplay loop controls playsinline></video>
+              <video id="v" autoplay loop controls playsinline></video>
               <script>
+                const source='%s';
                 const v=document.getElementById('v');
-                v.volume=1.0;
-                v.play().catch(()=>{});
+                let objectUrl=null;
+
+                function startPlayback() {
+                  v.loop=true;
+                  v.volume=1.0;
+                  v.play().catch(err => console.error('[VideoScreen] play failed', err));
+                }
+
+                function assignDirect() {
+                  console.warn('[VideoScreen] Blob load failed, trying direct file source');
+                  v.src=source;
+                  v.load();
+                  startPlayback();
+                }
+
+                function loadLocalVideo() {
+                  const xhr=new XMLHttpRequest();
+                  try {
+                    xhr.open('GET', source, true);
+                    xhr.responseType='blob';
+                  } catch (e) {
+                    console.error('[VideoScreen] XHR setup failed', e);
+                    assignDirect();
+                    return;
+                  }
+
+                  xhr.onload=function() {
+                    if (xhr.status!==0 && xhr.status!==200) {
+                      console.error('[VideoScreen] Local video XHR status', xhr.status);
+                      assignDirect();
+                      return;
+                    }
+                    try {
+                      objectUrl=URL.createObjectURL(xhr.response);
+                      v.src=objectUrl;
+                      v.load();
+                      startPlayback();
+                    } catch (e) {
+                      console.error('[VideoScreen] Blob URL failed', e);
+                      assignDirect();
+                    }
+                  };
+
+                  xhr.onerror=function() {
+                    console.error('[VideoScreen] Local video XHR failed');
+                    assignDirect();
+                  };
+
+                  xhr.send();
+                }
+
+                v.addEventListener('error', () => {
+                  const e=v.error;
+                  console.error('[VideoScreen] media error', e ? e.code : 'unknown', source);
+                });
+
+                window.addEventListener('pagehide', () => {
+                  if (objectUrl) URL.revokeObjectURL(objectUrl);
+                });
+
+                loadLocalVideo();
               </script>
             </body>
             </html>
