@@ -2,28 +2,35 @@ package com.furk5nn.videoscreen.client;
 
 import de.keksuccino.rinku.Rinku;
 import de.keksuccino.rinku.RinkuBrowser;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+
 import net.minecraft.resources.Identifier;
 
 public final class ChromiumVideoPlayer implements AutoCloseable {
     private final File source;
     private final Path htmlFile;
+    private final LocalVideoHttpServer mediaServer;
     private RinkuBrowser browser;
     private boolean paused;
     private int width;
     private int height;
 
     public ChromiumVideoPlayer(File source, int width, int height) throws IOException {
-        this.source = source;
+        this.source = source.getCanonicalFile();
+
+        if (!Rinku.isInitialized()) {
+            throw new IllegalStateException("Rinku is not initialized yet");
+        }
+
+        this.mediaServer = new LocalVideoHttpServer(this.source);
         this.htmlFile = Files.createTempFile("videoscreen-", ".html");
 
-        String videoUri = source.toURI().toASCIIString()
-            .replace("\\", "\\\\")
-            .replace("'", "\\'");
+        String mediaUrl = mediaServer.uri().toASCIIString();
 
         String html = """
             <!doctype html>
@@ -31,85 +38,56 @@ public final class ChromiumVideoPlayer implements AutoCloseable {
             <head>
               <meta charset="utf-8">
               <style>
-                html,body{margin:0;width:100%%;height:100%%;overflow:hidden;background:#000}
+                html,body{margin:0;width:100%%;height:100%%;overflow:hidden;background:#000;color:#fff;font-family:sans-serif}
+                #wrap{position:relative;width:100%%;height:100%%;background:#000}
                 video{display:block;width:100%%;height:100%%;object-fit:contain;background:#000}
+                #err{position:absolute;left:12px;top:12px;right:12px;padding:10px;background:rgba(120,0,0,.82);font-size:16px;display:none;white-space:pre-wrap}
               </style>
             </head>
             <body>
-              <video id="v" autoplay loop controls playsinline></video>
+              <div id="wrap">
+                <video id="v" autoplay loop controls playsinline preload="auto"></video>
+                <div id="err"></div>
+              </div>
               <script>
                 const source='%s';
                 const v=document.getElementById('v');
-                let objectUrl=null;
+                const err=document.getElementById('err');
 
-                function startPlayback() {
+                function show(msg){
+                  err.textContent=msg;
+                  err.style.display='block';
+                  console.error('[VideoScreen] '+msg);
+                }
+
+                function start(){
+                  v.src=source;
                   v.loop=true;
                   v.volume=1.0;
-                  v.play().catch(err => console.error('[VideoScreen] play failed', err));
-                }
-
-                function assignDirect() {
-                  console.warn('[VideoScreen] Blob load failed, trying direct file source');
-                  v.src=source;
                   v.load();
-                  startPlayback();
+                  const p=v.play();
+                  if(p && p.catch) p.catch(e=>show('PLAY FAILED: '+e.name+' - '+e.message));
                 }
 
-                function loadLocalVideo() {
-                  const xhr=new XMLHttpRequest();
-                  try {
-                    xhr.open('GET', source, true);
-                    xhr.responseType='blob';
-                  } catch (e) {
-                    console.error('[VideoScreen] XHR setup failed', e);
-                    assignDirect();
-                    return;
-                  }
-
-                  xhr.onload=function() {
-                    if (xhr.status!==0 && xhr.status!==200) {
-                      console.error('[VideoScreen] Local video XHR status', xhr.status);
-                      assignDirect();
-                      return;
-                    }
-                    try {
-                      objectUrl=URL.createObjectURL(xhr.response);
-                      v.src=objectUrl;
-                      v.load();
-                      startPlayback();
-                    } catch (e) {
-                      console.error('[VideoScreen] Blob URL failed', e);
-                      assignDirect();
-                    }
-                  };
-
-                  xhr.onerror=function() {
-                    console.error('[VideoScreen] Local video XHR failed');
-                    assignDirect();
-                  };
-
-                  xhr.send();
-                }
-
-                v.addEventListener('error', () => {
-                  const e=v.error;
-                  console.error('[VideoScreen] media error', e ? e.code : 'unknown', source);
+                v.addEventListener('loadedmetadata', ()=>{
+                  err.style.display='none';
+                  console.log('[VideoScreen] metadata '+v.videoWidth+'x'+v.videoHeight+' duration='+v.duration);
+                });
+                v.addEventListener('canplay', ()=>console.log('[VideoScreen] canplay'));
+                v.addEventListener('playing', ()=>console.log('[VideoScreen] playing'));
+                v.addEventListener('error', ()=>{
+                  let code=v.error ? v.error.code : 0;
+                  let label = code===1?'ABORTED':code===2?'NETWORK':code===3?'DECODE':code===4?'FORMAT_NOT_SUPPORTED':'UNKNOWN';
+                  show('MEDIA ERROR '+code+' ('+label+')\\n'+source);
                 });
 
-                window.addEventListener('pagehide', () => {
-                  if (objectUrl) URL.revokeObjectURL(objectUrl);
-                });
-
-                loadLocalVideo();
+                start();
               </script>
             </body>
             </html>
-            """.formatted(videoUri);
-        Files.writeString(htmlFile, html, StandardCharsets.UTF_8);
+            """.formatted(mediaUrl);
 
-        if (!Rinku.isInitialized()) {
-            throw new IllegalStateException("Rinku is not initialized yet");
-        }
+        Files.writeString(htmlFile, html, StandardCharsets.UTF_8);
 
         this.width = Math.max(320, width);
         this.height = Math.max(180, height);
@@ -159,6 +137,7 @@ public final class ChromiumVideoPlayer implements AutoCloseable {
             browser.close();
             browser = null;
         }
+        mediaServer.close();
         try {
             Files.deleteIfExists(htmlFile);
         } catch (IOException ignored) {
