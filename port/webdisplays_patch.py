@@ -230,6 +230,113 @@ model_dir = DST / "src/main/resources/assets/webdisplays/models/block"
 """, encoding="utf-8")
 
 
+# Stage the non-screen item renderers behind no-op compatibility shells while the
+# 26.2 screen pipeline is brought up. Their gameplay items remain registered.
+render_dir = DST / "src/main/java/net/montoyo/wd/client/renderers"
+(render_dir / "IItemRenderer.java").write_text("""package net.montoyo.wd.client.renderers;
+
+public interface IItemRenderer {
+}
+""", encoding="utf-8")
+
+(render_dir / "MinePadRenderer.java").write_text("""package net.montoyo.wd.client.renderers;
+
+public final class MinePadRenderer implements IItemRenderer {
+    public MinePadRenderer() {
+    }
+
+    public static boolean renderAtSide(float side) {
+        return true;
+    }
+}
+""", encoding="utf-8")
+
+(render_dir / "LaserPointerRenderer.java").write_text("""package net.montoyo.wd.client.renderers;
+
+public final class LaserPointerRenderer implements IItemRenderer {
+    public LaserPointerRenderer() {
+    }
+
+    public static boolean isOn() {
+        return false;
+    }
+}
+""", encoding="utf-8")
+
+(render_dir / "ModelMinePad.java").write_text("""package net.montoyo.wd.client.renderers;
+
+public final class ModelMinePad {
+}
+""", encoding="utf-8")
+
+# Remove old hand-render/highlight hooks that use APIs removed in 26.2. They are
+# restored later with the new item feature-renderer API.
+client_proxy = DST / "src/main/java/net/montoyo/wd/client/ClientProxy.java"
+if client_proxy.exists():
+    s = client_proxy.read_text(encoding="utf-8")
+    s = s.replace("import com.mojang.blaze3d.platform.GlStateManager;", "import com.mojang.blaze3d.opengl.GlStateManager;")
+    s = s.replace("import net.neoforged.neoforge.client.event.RenderHighlightEvent;\n", "")
+    s = re.sub(r"\n\s*@SubscribeEvent\s+public void onRenderPlayerHand\(RenderHandEvent ev\) \{.*?\n\s*\}", "\n", s, flags=re.S)
+    s = re.sub(r"\n\s*public static void onDrawSelection\(RenderHighlightEvent\.Block event\) \{.*?\n\s*\}", "\n", s, flags=re.S)
+    client_proxy.write_text(s, encoding="utf-8")
+
+webdisplays_java = DST / "src/main/java/net/montoyo/wd/WebDisplays.java"
+if webdisplays_java.exists():
+    s = webdisplays_java.read_text(encoding="utf-8")
+    s = s.replace("            NeoForge.EVENT_BUS.addListener(ClientProxy::onDrawSelection);\n", "")
+    # Advancement trigger registration changed heavily in 26.2 and is unrelated
+    # to screen playback; remove it from the core-port stage.
+    s = re.sub(r"\s*public static final DeferredRegister<CriterionTrigger<\?>> TRIGGERS =.*?CRITERION_KEYBOARD_CAT =\s*TRIGGERS\.register\([^;]+;\n", "\n", s, flags=re.S)
+    s = s.replace("        TRIGGERS.register(bus);\n", "")
+    s = s.replace("import net.minecraft.advancements.CriterionTrigger;\n", "")
+    s = s.replace("import net.montoyo.wd.core.WDCriterion;\n", "")
+    webdisplays_java.write_text(s, encoding="utf-8")
+
+wdcriterion = DST / "src/main/java/net/montoyo/wd/core/WDCriterion.java"
+if wdcriterion.exists():
+    wdcriterion.unlink()
+
+# Remove calls to the staged-out custom advancements.
+for rel in [
+    "src/main/java/net/montoyo/wd/entity/KeyboardBlockEntity.java",
+    "src/main/java/net/montoyo/wd/item/ItemLinker.java",
+    "src/main/java/net/montoyo/wd/item/ItemMinePad2.java",
+    "src/main/java/net/montoyo/wd/block/ScreenBlock.java",
+]:
+    p = DST / rel
+    if p.exists():
+        s = p.read_text(encoding="utf-8")
+        s = re.sub(r"\s*if\s*\([^\n]*instanceof ServerPlayer[^\n]*\)\s*\n\s*WebDisplays\.CRITERION_[A-Z_]+\.get\(\)\.trigger\([^;]+;\n", "\n", s)
+        p.write_text(s, encoding="utf-8")
+
+# CompoundTag getters return Optional values in 26.2. These classes still use
+# CompoundTag as their own serialized payload format, so unwrap with safe defaults.
+screen_data = DST / "src/main/java/net/montoyo/wd/entity/ScreenData.java"
+if screen_data.exists():
+    s = screen_data.read_text(encoding="utf-8")
+    s = re.sub(r'tag\.getByte\("([^"]+)"\)', r'tag.getByte("\1").orElse((byte) 0)', s)
+    s = re.sub(r'tag\.getInt\("([^"]+)"\)', r'tag.getInt("\1").orElse(0)', s)
+    s = re.sub(r'tag\.getLong\("([^"]+)"\)', r'tag.getLong("\1").orElse(0L)', s)
+    s = re.sub(r'tag\.getDouble\("([^"]+)"\)', r'tag.getDouble("\1").orElse(0.0)', s)
+    s = re.sub(r'tag\.getBoolean\("([^"]+)"\)', r'tag.getBoolean("\1").orElse(false)', s)
+    s = re.sub(r'tag\.getString\("([^"]+)"\)', r'tag.getString("\1").orElse("")', s)
+    s = re.sub(r'tag\.getUUID\("([^"]+)"\)', r'tag.getUUID("\1").orElse(new java.util.UUID(0L, 0L))', s)
+    s = re.sub(r'tag\.getList\("([^"]+)",\s*[^)]+\)', r'tag.getList("\1").orElseGet(ListTag::new)', s)
+    s = re.sub(r'friends\.getCompound\(i\)', r'friends.getCompound(i).orElseGet(CompoundTag::new)', s)
+    s = re.sub(r'upgrades\.getCompound\(i\)', r'upgrades.getCompound(i).orElseGet(CompoundTag::new)', s)
+    screen_data.write_text(s, encoding="utf-8")
+
+# Direction vector helper signature changed in 26.2.
+screen_be = DST / "src/main/java/net/montoyo/wd/entity/ScreenBlockEntity.java"
+if screen_be.exists():
+    s = screen_be.read_text(encoding="utf-8")
+    s = s.replace(
+        "Direction.getNearest(look.x, look.y, look.z).getOpposite()",
+        "Direction.getApproximateNearest(look.x, look.y, look.z).getOpposite()"
+    )
+    screen_be.write_text(s, encoding="utf-8")
+
+
 # Current resource metadata.
 (DST / "src/main/resources/pack.mcmeta").write_text("""{
   "pack": {
