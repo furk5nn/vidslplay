@@ -9,7 +9,7 @@ if DST.exists():
     shutil.rmtree(DST)
 shutil.copytree(SRC, DST)
 
-(DST / "settings.gradle").write_text('rootProject.name = "waterframes-26.2-port"\\n', encoding="utf-8")
+(DST / "settings.gradle").write_text('rootProject.name = "waterframes-26.2-port"\n', encoding="utf-8")
 
 (DST / "gradle.properties").write_text("""org.gradle.jvmargs=-Xmx4G
 org.gradle.daemon=false
