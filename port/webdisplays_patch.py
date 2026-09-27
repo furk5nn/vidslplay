@@ -2945,3 +2945,233 @@ public final class TileRegistry {
 """, encoding="utf-8")
 
 print("Block API cleanup complete")
+
+
+# ===========================================================================
+# WIDGET / NETWORK / ATTACHMENT 26.2 PORT
+# ===========================================================================
+
+controls = DST / "src/main/java/net/montoyo/wd/client/gui/controls"
+
+# Vanilla Button wrapper -> event-object input and extractor rendering.
+button = controls / "Button.java"
+if button.exists():
+    text = button.read_text(encoding="utf-8")
+    for imp in [
+        "import com.mojang.blaze3d.vertex.PoseStack;\n",
+        "import net.minecraft.client.gui.GuiGraphics;\n",
+    ]:
+        text = text.replace(imp, "")
+    if "import net.minecraft.client.gui.GuiGraphicsExtractor;" not in text:
+        text = text.replace("import net.minecraft.network.chat.Component;",
+                            "import net.minecraft.client.gui.GuiGraphicsExtractor;\nimport net.minecraft.client.input.MouseButtonEvent;\nimport net.minecraft.client.input.MouseButtonInfo;\nimport net.minecraft.network.chat.Component;")
+    text = text.replace(
+        "btn.mouseClicked(mouseX, mouseY, mouseButton)",
+        "btn.mouseClicked(new MouseButtonEvent(mouseX, mouseY, new MouseButtonInfo(mouseButton, 0)), false)"
+    )
+    text = text.replace(
+        "btn.mouseReleased(mouseX, mouseY,state)",
+        "btn.mouseReleased(new MouseButtonEvent(mouseX, mouseY, new MouseButtonInfo(state, 0)))"
+    )
+    text = text.replace("public void draw(GuiGraphics poseStack,", "public void draw(GuiGraphicsExtractor poseStack,")
+    text = text.replace("btn.render(poseStack, mouseX, mouseY, ptt);",
+                        "btn.extractRenderState(poseStack, mouseX, mouseY, ptt);")
+    button.write_text(text, encoding="utf-8")
+
+
+# EditBox wrapper -> current KeyEvent/CharacterEvent/MouseButtonEvent.
+textfield = controls / "TextField.java"
+if textfield.exists():
+    text = textfield.read_text(encoding="utf-8")
+    text = text.replace("import com.mojang.blaze3d.vertex.PoseStack;\n", "")
+    text = text.replace("import net.minecraft.client.gui.GuiGraphics;\n", "")
+    if "import net.minecraft.client.gui.GuiGraphicsExtractor;" not in text:
+        text = text.replace("import net.minecraft.client.gui.components.EditBox;",
+                            "import net.minecraft.client.gui.GuiGraphicsExtractor;\nimport net.minecraft.client.gui.components.EditBox;\nimport net.minecraft.client.input.KeyEvent;\nimport net.minecraft.client.input.CharacterEvent;\nimport net.minecraft.client.input.MouseButtonEvent;\nimport net.minecraft.client.input.MouseButtonInfo;")
+    text = text.replace("field.keyPressed(key, scanCode, modifiers)", "field.keyPressed(new KeyEvent(key, scanCode, modifiers))")
+    text = text.replace("field.keyReleased(key, scanCode, modifiers)", "field.keyReleased(new KeyEvent(key, scanCode, modifiers))")
+    text = text.replace("field.charTyped((char) keyCode, modifier)", "field.charTyped(new CharacterEvent(keyCode))")
+    text = text.replace("field.mouseClicked(mouseX, mouseY, mouseButton)",
+                        "field.mouseClicked(new MouseButtonEvent(mouseX, mouseY, new MouseButtonInfo(mouseButton, 0)), false)")
+    text = text.replace("field.mouseReleased(mouseX, mouseY, state)",
+                        "field.mouseReleased(new MouseButtonEvent(mouseX, mouseY, new MouseButtonInfo(state, 0)))")
+    text = text.replace("field.mouseClicked(mouseX, mouseY, 0)",
+                        "field.mouseClicked(new MouseButtonEvent(mouseX, mouseY, new MouseButtonInfo(0, 0)), false)")
+    text = text.replace("public void draw(GuiGraphics poseStack,", "public void draw(GuiGraphicsExtractor poseStack,")
+    text = text.replace("field.render(poseStack, mouseX, mouseY, ptt);",
+                        "field.extractRenderState(poseStack, mouseX, mouseY, ptt);")
+    textfield.write_text(text, encoding="utf-8")
+
+
+# Child container: 26.2 Matrix3x2fStack uses pushMatrix/popMatrix and XY translation.
+container = controls / "Container.java"
+if container.exists():
+    text = container.read_text(encoding="utf-8")
+    text = text.replace("import com.mojang.blaze3d.vertex.PoseStack;\n", "")
+    text = text.replace("import net.minecraft.client.gui.GuiGraphics;\n", "import net.minecraft.client.gui.GuiGraphicsExtractor;\n")
+    text = text.replace("public void draw(GuiGraphics poseStack,", "public void draw(GuiGraphicsExtractor poseStack,")
+    text = text.replace("poseStack.pose().pushPose();", "poseStack.pose().pushMatrix();")
+    text = text.replace("poseStack.pose().translate(x + paddingX, y + paddingY, 0.0);",
+                        "poseStack.pose().translate(x + paddingX, y + paddingY);")
+    text = text.replace("poseStack.pose().popPose();", "poseStack.pose().popMatrix();")
+    container.write_text(text, encoding="utf-8")
+
+
+# ControlGroup border and label use extractor primitives, no raw GL.
+group = controls / "ControlGroup.java"
+if group.exists():
+    text = group.read_text(encoding="utf-8")
+    # Keep everything outside draw()/pack/load intact.
+    text = replace_method_by_signature(
+        text, "public void draw(",
+        """    @Override
+    public void draw(net.minecraft.client.gui.GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        super.draw(graphics, mouseX, mouseY, partialTick);
+        if (!visible) return;
+
+        int x1 = x + 4;
+        int y1 = y + 4;
+        int x2 = x + width - 4;
+        int y2 = y + height - 4;
+        int border = 0xFF808080;
+
+        if (labelW == 0) {
+            graphics.fill(x1, y1, x2, y1 + 1, border);
+        } else {
+            graphics.fill(x1, y1, x1 + 8, y1 + 1, border);
+            graphics.fill(x1 + labelW + 12, y1, x2, y1 + 1, border);
+        }
+        graphics.fill(x1, y2 - 1, x2, y2, border);
+        graphics.fill(x1, y1, x1 + 1, y2, border);
+        graphics.fill(x2 - 1, y1, x2, y2, border);
+
+        if (labelW != 0)
+            graphics.text(net.minecraft.client.Minecraft.getInstance().font, label,
+                    x + 14, y, labelColor, labelShadowed);
+    }"""
+    )
+    # Drop stale imports that the replaced method no longer needs.
+    for imp in [
+        "import com.mojang.blaze3d.platform.GlStateManager;\n",
+        "import com.mojang.blaze3d.systems.RenderSystem;\n",
+        "import com.mojang.blaze3d.vertex.*;\n",
+        "import net.minecraft.client.renderer.GameRenderer;\n",
+        "import java.util.Arrays;\n",
+    ]:
+        text = text.replace(imp, "")
+    text = text.replace("import net.minecraft.client.gui.GuiGraphics;",
+                        "import net.minecraft.client.gui.GuiGraphicsExtractor;")
+    group.write_text(text, encoding="utf-8")
+
+
+# Simple textured icon via the base Control texture helper.
+icon = controls / "Icon.java"
+if icon.exists():
+    text = icon.read_text(encoding="utf-8")
+    text = text.replace("import com.mojang.blaze3d.systems.RenderSystem;\n", "")
+    text = text.replace("import com.mojang.blaze3d.vertex.PoseStack;\n", "")
+    text = text.replace("import net.minecraft.client.gui.GuiGraphics;\n", "import net.minecraft.client.gui.GuiGraphicsExtractor;\n")
+    text = text.replace("import org.lwjgl.opengl.GL;\n", "").replace("import org.lwjgl.opengl.GL11;\n", "")
+    text = replace_method_by_signature(
+        text, "public void draw(",
+        """    @Override
+    public void draw(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        if (texture == null || !visible) return;
+        bindTexture(texture);
+        fillTexturedRect(graphics, x, y, width, height, u1, v1, u2, v2);
+    }"""
+    )
+    icon.write_text(text, encoding="utf-8")
+
+
+# Checkbox uses the normalized texture blit overload.
+checkbox = controls / "CheckBox.java"
+if checkbox.exists():
+    text = checkbox.read_text(encoding="utf-8")
+    for imp in [
+        "import com.mojang.blaze3d.systems.RenderSystem;\n",
+        "import com.mojang.blaze3d.vertex.PoseStack;\n",
+        "import net.minecraft.client.renderer.GameRenderer;\n",
+    ]:
+        text = text.replace(imp, "")
+    text = text.replace("import net.minecraft.client.gui.GuiGraphics;\n", "import net.minecraft.client.gui.GuiGraphicsExtractor;\n")
+    text = replace_method_by_signature(
+        text, "public void draw(",
+        """    @Override
+    public void draw(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        if (!visible) return;
+        Identifier texture = checked ? texChecked : texUnchecked;
+        graphics.blit(texture, x, y, x + WIDTH, y + HEIGHT, 0f, 1f, 0f, 1f);
+        boolean inside = !disabled && mouseX >= x && mouseX <= x + WIDTH + 2 + labelW
+                && mouseY >= y && mouseY < y + HEIGHT;
+        graphics.text(Minecraft.getInstance().font, label, x + WIDTH + 2, y + 4,
+                inside ? 0xFF0080FF : COLOR_WHITE);
+    }"""
+    )
+    text = text.replace("import net.minecraft.resources.ResourceLocation;", "import net.minecraft.resources.Identifier;")
+    text = text.replace("ResourceLocation.fromNamespaceAndPath", "Identifier.fromNamespaceAndPath")
+    text = text.replace("public void postDraw(GuiGraphics poseStack,", "public void postDraw(GuiGraphicsExtractor poseStack,")
+    checkbox.write_text(text, encoding="utf-8")
+
+
+# 26.2 attachments require a MapCodec.
+cap = DST / "src/main/java/net/montoyo/wd/core/WDDCapability.java"
+if cap.exists():
+    text = cap.read_text(encoding="utf-8")
+    text = text.replace("import com.mojang.serialization.Codec;", "import com.mojang.serialization.Codec;\nimport com.mojang.serialization.MapCodec;")
+    text = text.replace(
+        "public static final Codec<WDDCapability> CODEC = RecordCodecBuilder.create(instance ->",
+        "public static final MapCodec<WDDCapability> CODEC = RecordCodecBuilder.mapCodec(instance ->"
+    )
+    cap.write_text(text, encoding="utf-8")
+
+
+# Network API: client->server moved to ClientPacketDistributor.
+network = DST / "src/main/java/net/montoyo/wd/net/WDNetworkRegistry.java"
+if network.exists():
+    text = network.read_text(encoding="utf-8")
+    if "ClientPacketDistributor" not in text:
+        text = text.replace("import net.neoforged.neoforge.network.PacketDistributor;",
+                            "import net.neoforged.neoforge.network.PacketDistributor;\nimport net.neoforged.neoforge.client.network.ClientPacketDistributor;")
+    text = text.replace("PacketDistributor.sendToServer(payload);", "ClientPacketDistributor.sendToServer(payload);")
+    text = text.replace(
+        "new net.minecraft.world.level.ChunkPos(pos)",
+        "new net.minecraft.world.level.ChunkPos(pos.getX() >> 4, pos.getZ() >> 4)"
+    )
+    network.write_text(text, encoding="utf-8")
+
+
+# MinePad packet UUID storage follows CompoundTag codec API.
+minepad_msg = DST / "src/main/java/net/montoyo/wd/net/server_bound/C2SMessageMinepadUrl.java"
+if minepad_msg.exists():
+    text = minepad_msg.read_text(encoding="utf-8")
+    if "import net.minecraft.core.UUIDUtil;" not in text:
+        text = text.replace("import net.minecraft.core.component.DataComponents;",
+                            "import net.minecraft.core.component.DataComponents;\nimport net.minecraft.core.UUIDUtil;")
+    text = text.replace('tag.putUUID("PadID", id)', 'tag.store("PadID", UUIDUtil.CODEC, id)')
+    text = text.replace('tag.getUUID("PadID")',
+                        'tag.read("PadID", UUIDUtil.CODEC).orElse(new java.util.UUID(0L, 0L))')
+    minepad_msg.write_text(text, encoding="utf-8")
+
+
+# Authlib profile record access.
+acq = DST / "src/main/java/net/montoyo/wd/net/server_bound/C2SMessageACQuery.java"
+if acq.exists():
+    text = acq.read_text(encoding="utf-8").replace(".getName()", ".name()")
+    acq.write_text(text, encoding="utf-8")
+
+
+# Camera accessor.
+camera = DST / "src/main/java/net/montoyo/wd/client/gui/camera/KeyboardCamera.java"
+if camera.exists():
+    text = camera.read_text(encoding="utf-8").replace(".getCamera().getEntity()", ".getCamera().entity()")
+    camera.write_text(text, encoding="utf-8")
+
+
+# SoundEvent is a record in 26.2.
+server_gui = DST / "src/main/java/net/montoyo/wd/client/gui/GuiServer.java"
+if server_gui.exists():
+    text = server_gui.read_text(encoding="utf-8").replace(".soundServer.getLocation()", ".soundServer.location()")
+    server_gui.write_text(text, encoding="utf-8")
+
+print("Widget/network/attachment port pass complete")
