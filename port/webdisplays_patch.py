@@ -560,6 +560,90 @@ if peripheral.exists():
     peripheral.write_text(s, encoding="utf-8")
 
 
+
+# Repair generic static factory calls produced by the DirectionProperty migration.
+for java in (DST / "src/main/java").rglob("*.java"):
+    s = java.read_text(encoding="utf-8")
+    s = s.replace("EnumProperty<Direction>.create(", "EnumProperty.create(")
+    java.write_text(s, encoding="utf-8")
+
+# Remove obsolete event methods without regexing across nested blocks.
+def remove_java_method(source: str, signature_fragment: str) -> str:
+    pos = source.find(signature_fragment)
+    if pos < 0:
+        return source
+
+    line_start = source.rfind("\n", 0, pos) + 1
+    # Include immediately preceding annotations.
+    scan = line_start
+    while scan > 0:
+        prev_end = scan - 1
+        prev_start = source.rfind("\n", 0, prev_end) + 1
+        prev = source[prev_start:prev_end].strip()
+        if prev.startswith("@"):
+            line_start = prev_start
+            scan = prev_start
+        else:
+            break
+
+    brace = source.find("{", pos)
+    if brace < 0:
+        return source
+
+    depth = 0
+    i = brace
+    in_string = False
+    string_quote = ""
+    escaped = False
+    while i < len(source):
+        ch = source[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == string_quote:
+                in_string = False
+        else:
+            if ch in ('"', "'"):
+                in_string = True
+                string_quote = ch
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    if end < len(source) and source[end] == "\n":
+                        end += 1
+                    return source[:line_start] + source[end:]
+        i += 1
+    return source
+
+client_proxy = DST / "src/main/java/net/montoyo/wd/client/ClientProxy.java"
+if client_proxy.exists():
+    # Start from the upstream copy again for this file so no earlier partial
+    # regex deletion can leave unmatched braces.
+    upstream_client_proxy = SRC / "src/main/java/net/montoyo/wd/client/ClientProxy.java"
+    s = upstream_client_proxy.read_text(encoding="utf-8")
+
+    s = s.replace("import net.minecraft.resources.ResourceLocation;", "import net.minecraft.resources.Identifier;")
+    s = re.sub(r"\bResourceLocation\b", "Identifier", s)
+    s = s.replace("import net.minecraft.Util;", "import net.minecraft.util.Util;")
+    s = s.replace("import com.mojang.blaze3d.platform.GlStateManager;", "import com.mojang.blaze3d.opengl.GlStateManager;")
+    s = s.replace("import net.neoforged.neoforge.client.event.ModelEvent;\n", "")
+    s = s.replace("import net.neoforged.neoforge.client.event.RenderHighlightEvent;\n", "")
+    s = s.replace("import net.montoyo.wd.client.renderers.ScreenModelLoader;\n", "")
+    s = s.replace("import net.montoyo.wd.client.renderers.ScreenThinModelLoader;\n", "")
+    s = re.sub(r"\.isClientSide\b(?!\s*\()", ".isClientSide()", s)
+    s = s.replace(".isClientSide()()", ".isClientSide()")
+
+    s = remove_java_method(s, "public static void onModelRegistryEvent(")
+    s = remove_java_method(s, "public void onRenderPlayerHand(")
+    s = remove_java_method(s, "public static void onDrawSelection(")
+
+    client_proxy.write_text(s, encoding="utf-8")
+
 # Current resource metadata.
 (DST / "src/main/resources/pack.mcmeta").write_text("""{
   "pack": {
