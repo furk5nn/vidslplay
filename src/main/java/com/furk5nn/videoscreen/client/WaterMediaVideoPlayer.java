@@ -39,10 +39,11 @@ public final class WaterMediaVideoPlayer implements AutoCloseable {
 
         try {
             Minecraft mc = Minecraft.getInstance();
+            Thread renderThread = Thread.currentThread();
             player = MediaAPI.createPlayer(
                 mrl,
-                () -> MediaAPI.glEngine(mc.gameThread, mc),
-                MediaAPI::jsEngine
+                () -> MediaAPI.glEngine(renderThread, task -> mc.execute(task)),
+                MediaAPI::alEngine
             );
 
             if (player == null) return;
