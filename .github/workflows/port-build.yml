@@ -1,0 +1,30 @@
+name: Build 26.2 Ports
+
+on:
+  push:
+    branches: [ "webdisplays-waterframes-26.2" ]
+  workflow_dispatch:
+
+jobs:
+  build-waterframes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+      - name: Prepare WaterFrames 26.2 source
+        run: python3 port/waterframes_patch.py
+      - name: Build WaterFrames 26.2
+        working-directory: build-port/waterframes
+        run: gradle build --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: waterframes-neoforge-26.2-port
+          path: build-port/waterframes/build/libs/*.jar
