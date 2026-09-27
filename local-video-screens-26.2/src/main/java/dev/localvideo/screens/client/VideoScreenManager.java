@@ -32,12 +32,21 @@ public final class VideoScreenManager {
 
     public void play(ScreenGeometry geometry, File file) {
         if (file == null || !file.isFile()) return;
+
         VideoSession previous = sessions.remove(geometry.key());
         if (previous != null) previous.close();
-        VideoSession session = new VideoSession(geometry, file);
-        sessions.put(geometry.key(), session);
-        ensureLoadHandler();
-        session.start();
+
+        VideoCompatibilityCache.prepare(file, compatibleFile -> {
+            if (compatibleFile == null || !compatibleFile.isFile()) return;
+
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.level == null || !geometry.isStillValid(mc.level)) return;
+
+            VideoSession session = new VideoSession(geometry, compatibleFile);
+            sessions.put(geometry.key(), session);
+            ensureLoadHandler();
+            session.start();
+        });
     }
 
     private void ensureLoadHandler() {
