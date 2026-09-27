@@ -23,9 +23,17 @@ ordering="NONE"
 side="BOTH"
 
 
+
 [[dependencies.${mod_id}]]
-modId="rinku"
+modId="watermedia"
 type="required"
-versionRange="[3.0.4,)"
-ordering="BEFORE"
+versionRange="[3.0.0.23,)"
+ordering="AFTER"
+side="CLIENT"
+
+[[dependencies.${mod_id}]]
+modId="watermedia_binaries"
+type="required"
+versionRange="[3.0.0.6,)"
+ordering="AFTER"
 side="CLIENT"
