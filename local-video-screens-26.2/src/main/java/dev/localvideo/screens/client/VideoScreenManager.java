@@ -4,7 +4,7 @@ import de.keksuccino.rinku.Rinku;
 import de.keksuccino.rinku.RinkuBrowser;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
-import net.minecraft.resources.Identifier;
+import net.minecraft.resources.Identifier;\nimport net.minecraft.util.LightCoordsUtil;
 import net.minecraft.world.phys.Vec3;
 import org.cef.browser.CefBrowser;
 import org.cef.browser.CefFrame;
@@ -117,10 +117,10 @@ public final class VideoScreenManager {
             stack.pushPose();
             stack.translate(corner.x - camera.x, corner.y - camera.y, corner.z - camera.z);
             collector.submitCustomGeometry(stack, RenderTypes.text(texture), (pose, buffer) -> {
-                buffer.addVertex(pose, 0.0F, 0.0F, 0.0F).setColor(-1).setUv(0.0F, 1.0F);
-                buffer.addVertex(pose, (float) r.x, (float) r.y, (float) r.z).setColor(-1).setUv(1.0F, 1.0F);
-                buffer.addVertex(pose, (float) (r.x + u.x), (float) (r.y + u.y), (float) (r.z + u.z)).setColor(-1).setUv(1.0F, 0.0F);
-                buffer.addVertex(pose, (float) u.x, (float) u.y, (float) u.z).setColor(-1).setUv(0.0F, 0.0F);
+                buffer.addVertex(pose, 0.0F, 0.0F, 0.0F).setColor(-1).setUv(0.0F, 1.0F).setLight(LightCoordsUtil.FULL_BRIGHT);
+                buffer.addVertex(pose, (float) r.x, (float) r.y, (float) r.z).setColor(-1).setUv(1.0F, 1.0F).setLight(LightCoordsUtil.FULL_BRIGHT);
+                buffer.addVertex(pose, (float) (r.x + u.x), (float) (r.y + u.y), (float) (r.z + u.z)).setColor(-1).setUv(1.0F, 0.0F).setLight(LightCoordsUtil.FULL_BRIGHT);
+                buffer.addVertex(pose, (float) u.x, (float) u.y, (float) u.z).setColor(-1).setUv(0.0F, 0.0F).setLight(LightCoordsUtil.FULL_BRIGHT);
             });
             stack.popPose();
         }
