@@ -42,6 +42,11 @@ final class VideoInteractionScreen extends Screen {
     }
 
     @Override
+    public void extractBackground(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
+        // 26.2 applies the default screen blur here. Interaction mode must leave the world untouched.
+    }
+
+    @Override
     public void extractRenderState(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
         // Intentionally draw no GUI. The world and the in-world browser texture stay visible.
     }
