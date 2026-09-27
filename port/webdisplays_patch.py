@@ -1674,3 +1674,194 @@ for java in java_root.rglob("*.java"):
     java.write_text(text, encoding="utf-8")
 
 print("Final 26.2 normalization complete")
+
+
+# ===========================================================================
+# CORE SEMANTIC FIXES AFTER FINAL NORMALIZATION
+# ===========================================================================
+
+def replace_method_by_signature(source: str, signature: str, replacement: str) -> str:
+    sig = source.find(signature)
+    if sig < 0:
+        return source
+    # Start at annotation if immediately above.
+    line_start = source.rfind("\n", 0, sig) + 1
+    pre_start = source.rfind("\n", 0, max(0, line_start - 1)) + 1
+    if "@Override" in source[pre_start:line_start]:
+        line_start = pre_start
+    brace = source.find("{", sig)
+    if brace < 0:
+        return source
+    depth = 0
+    i = brace
+    while i < len(source):
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                while end < len(source) and source[end] in " \t\r\n":
+                    end += 1
+                return source[:line_start] + replacement.rstrip() + "\n\n" + source[end:]
+        i += 1
+    raise RuntimeError("Unbalanced method: " + signature)
+
+
+# Force block-entity persistence methods to ValueInput/ValueOutput regardless of
+# which 1.21.x source variant was copied earlier.
+for rel, owner in [
+    ("src/main/java/net/montoyo/wd/entity/ServerBlockEntity.java", True),
+    ("src/main/java/net/montoyo/wd/entity/AbstractInterfaceBlockEntity.java", True),
+]:
+    p = DST / rel
+    if p.exists():
+        text = p.read_text(encoding="utf-8")
+        text = text.replace("import net.minecraft.nbt.CompoundTag;\n", "")
+        text = text.replace("import net.minecraft.core.HolderLookup;\n", "")
+        if "import net.minecraft.world.level.storage.ValueInput;" not in text:
+            pkg_end = text.find("\n", text.find("package "))
+            text = text[:pkg_end+1] + "\nimport net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;\n" + text[pkg_end+1:]
+        text = replace_method_by_signature(
+            text, "loadAdditional(",
+            """    @Override
+    protected void loadAdditional(ValueInput input) {
+        super.loadAdditional(input);
+        owner = Util.readOwnerFromNBT(input);
+    }"""
+        )
+        text = replace_method_by_signature(
+            text, "saveAdditional(",
+            """    @Override
+    protected void saveAdditional(ValueOutput output) {
+        super.saveAdditional(output);
+        Util.writeOwnerToNBT(output, owner);
+    }"""
+        )
+        p.write_text(text, encoding="utf-8")
+
+
+redstone = DST / "src/main/java/net/montoyo/wd/entity/RedstoneControlBlockEntity.java"
+if redstone.exists():
+    text = redstone.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.nbt.CompoundTag;\n", "")
+    text = text.replace("import net.minecraft.core.HolderLookup;\n", "")
+    if "import net.minecraft.world.level.storage.ValueInput;" not in text:
+        pkg_end = text.find("\n", text.find("package "))
+        text = text[:pkg_end+1] + "\nimport net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;\n" + text[pkg_end+1:]
+    text = replace_method_by_signature(
+        text, "loadAdditional(",
+        """    @Override
+    protected void loadAdditional(ValueInput input) {
+        super.loadAdditional(input);
+        risingEdgeURL = input.getStringOr("RisingEdgeURL", "");
+        fallingEdgeURL = input.getStringOr("FallingEdgeURL", "");
+        state = input.getBooleanOr("Powered", false);
+    }"""
+    )
+    text = replace_method_by_signature(
+        text, "saveAdditional(",
+        """    @Override
+    protected void saveAdditional(ValueOutput output) {
+        super.saveAdditional(output);
+        output.putString("RisingEdgeURL", risingEdgeURL);
+        output.putString("FallingEdgeURL", fallingEdgeURL);
+        output.putBoolean("Powered", state);
+    }"""
+    )
+    redstone.write_text(text, encoding="utf-8")
+
+
+# Legacy overloads remain deliberately for WebDisplays' own controls, but only
+# event-object methods override Minecraft 26.2 interfaces.
+wdscreen = DST / "src/main/java/net/montoyo/wd/client/gui/WDScreen.java"
+if wdscreen.exists():
+    text = wdscreen.read_text(encoding="utf-8")
+    for signature in [
+        "public boolean charTyped(char codePoint, int modifiers)",
+        "public boolean mouseClicked(double mouseX, double mouseY, int button)",
+        "public boolean mouseReleased(double mouseX, double mouseY, int button)",
+        "public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY)",
+        "public boolean keyPressed(int keyCode, int scanCode, int modifiers)",
+        "public boolean keyReleased(int keyCode, int scanCode, int modifiers)",
+    ]:
+        text = text.replace("    @Override\n    " + signature, "    " + signature)
+    wdscreen.write_text(text, encoding="utf-8")
+
+
+# CompoundTag scalar accessors return Optional in 26.2. Apply only to ordinary
+# client/custom-data code, not ValueInput code.
+for java in java_root.rglob("*.java"):
+    text = java.read_text(encoding="utf-8")
+    if "ValueInput input" not in text or "CompoundTag" in text:
+        text = re.sub(r'(?<!getStringOr\()\.getString\("([^"]+)"\)', r'.getStringOr("\1", "")', text)
+        text = re.sub(r'(?<!getIntOr\()\.getInt\("([^"]+)"\)', r'.getIntOr("\1", 0)', text)
+        text = re.sub(r'(?<!getLongOr\()\.getLong\("([^"]+)"\)', r'.getLongOr("\1", 0L)', text)
+        text = re.sub(r'(?<!getDoubleOr\()\.getDouble\("([^"]+)"\)', r'.getDoubleOr("\1", 0.0)', text)
+        text = re.sub(r'(?<!getBooleanOr\()\.getBoolean\("([^"]+)"\)', r'.getBooleanOr("\1", false)', text)
+        text = re.sub(r'(?<!getByteOr\()\.getByte\("([^"]+)"\)', r'.getByteOr("\1", (byte)0)', text)
+    java.write_text(text, encoding="utf-8")
+
+
+# MinePad custom data uses codecs for UUIDs in 26.2.
+minepad = DST / "src/main/java/net/montoyo/wd/item/ItemMinePad2.java"
+if minepad.exists():
+    text = minepad.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.world.InteractionResultHolder;\n", "")
+    if "import net.minecraft.core.UUIDUtil;" not in text:
+        text = text.replace("import net.minecraft.nbt.CompoundTag;", "import net.minecraft.nbt.CompoundTag;\nimport net.minecraft.core.UUIDUtil;")
+    text = re.sub(r"public InteractionResultHolder<ItemStack> use\(", "public InteractionResult use(", text)
+    text = re.sub(
+        r"return new InteractionResultHolder<>\(ok \? InteractionResult\.SUCCESS : InteractionResult\.PASS, is\);",
+        "return ok ? InteractionResult.SUCCESS : InteractionResult.PASS;",
+        text
+    )
+    text = text.replace(
+        'copyTag().getUUID("PadID")',
+        'copyTag().read("PadID", UUIDUtil.CODEC).orElse(new UUID(0L, 0L))'
+    )
+    text = text.replace(
+        'tag.putUUID("PadID", uuid)',
+        'tag.store("PadID", UUIDUtil.CODEC, uuid)'
+    )
+    # Current hover-text API uses a Consumer and TooltipDisplay.
+    text = re.sub(
+        r'@Override\s+public void appendHoverText\(ItemStack stack,\s*TooltipContext context,\s*List<Component> tooltip,\s*TooltipFlag flag\)\s*\{\s*super\.appendHoverText\(stack, context, tooltip, flag\);',
+        '''@Override
+    public void appendHoverText(ItemStack stack, TooltipContext context,
+                                net.minecraft.world.item.component.TooltipDisplay display,
+                                java.util.function.Consumer<Component> tooltip,
+                                TooltipFlag flag) {
+        super.appendHoverText(stack, context, display, tooltip, flag);''',
+        text, flags=re.S
+    )
+    minepad.write_text(text, encoding="utf-8")
+
+
+# Ownership thief custom tag scalars.
+thief = DST / "src/main/java/net/montoyo/wd/item/ItemOwnershipThief.java"
+if thief.exists():
+    text = thief.read_text(encoding="utf-8")
+    text = re.sub(r'tag\.getInt\("([^"]+)"\)', r'tag.getIntOr("\1", 0)', text)
+    text = re.sub(r'tag\.getByte\("([^"]+)"\)', r'tag.getByteOr("\1", (byte)0)', text)
+    thief.write_text(text, encoding="utf-8")
+
+
+# SoundInstance renamed its resource accessor.
+audio = DST / "src/main/java/net/montoyo/wd/client/audio/WDAudioSource.java"
+if audio.exists():
+    text = audio.read_text(encoding="utf-8")
+    text = text.replace("public Identifier getLocation()", "public Identifier getIdentifier()")
+    text = text.replace("public ResourceLocation getLocation()", "public Identifier getIdentifier()")
+    audio.write_text(text, encoding="utf-8")
+
+
+# Remove imports whose old types were replaced by extractor/state APIs.
+control = DST / "src/main/java/net/montoyo/wd/client/gui/controls/Control.java"
+if control.exists():
+    text = control.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.client.renderer.MultiBufferSource;\n", "")
+    control.write_text(text, encoding="utf-8")
+
+
+print("Core semantic fixes complete")
