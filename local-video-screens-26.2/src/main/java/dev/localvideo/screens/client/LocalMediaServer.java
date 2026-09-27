@@ -22,7 +22,7 @@ final class LocalMediaServer implements AutoCloseable {
 
     LocalMediaServer(File file) throws IOException {
         this.file = file.getCanonicalFile();
-        this.server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         this.executor = Executors.newFixedThreadPool(2, r -> {
             Thread t = new Thread(r, "LocalVideoScreens-Media");
             t.setDaemon(true);
