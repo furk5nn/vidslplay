@@ -1,5 +1,9 @@
 name: Build 26.2 Ports
 
+concurrency:
+  group: ports-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [ "webdisplays-waterframes-26.2" ]
