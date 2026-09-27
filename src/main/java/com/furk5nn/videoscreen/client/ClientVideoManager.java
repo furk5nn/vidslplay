@@ -5,44 +5,56 @@ import java.util.HashMap;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import org.cef.browser.CefBrowser;
+import org.cef.browser.CefFrame;
+import org.cef.handler.CefLoadHandlerAdapter;
 import org.lwjgl.util.tinyfd.TinyFileDialogs;
+import de.keksuccino.rinku.Rinku;
 
 public final class ClientVideoManager {
     public static final ClientVideoManager INSTANCE = new ClientVideoManager();
+
     private final Map<Long, WaterMediaVideoPlayer> players = new HashMap<>();
+    private boolean loadHandlerInstalled;
 
     private ClientVideoManager() {}
 
-    public void interact(Level level, BlockPos pos, BlockState state) {
+    public void openConfig(Level level, BlockPos pos, BlockState state) {
         PanelLayout panel = PanelLayout.find(level, pos, state);
-        long key = panel.root().asLong();
-        WaterMediaVideoPlayer current = players.get(key);
+        Minecraft.getInstance().gui.setScreen(new VideoSelectScreen(panel));
+    }
 
-        if (Minecraft.getInstance().options.keyShift.isDown() && current != null) {
-            current.togglePause();
-            message(current.isPaused() ? "Video paused" : "Video playing");
-            return;
-        }
-
+    public void chooseVideo(PanelLayout panel) {
         String selected = TinyFileDialogs.tinyfd_openFileDialog(
-            "Choose MP4 video", "", null, null, false
+            "Choose local video",
+            "",
+            null,
+            "Video files",
+            false
         );
         if (selected == null || selected.isBlank()) return;
-        if (!selected.toLowerCase().endsWith(".mp4")) {
-            message("Please choose an .mp4 file");
+
+        File file = new File(selected);
+        if (!file.isFile()) {
+            message("Could not open selected file");
             return;
         }
 
         try {
+            long key = panel.root().asLong();
             WaterMediaVideoPlayer old = players.remove(key);
             if (old != null) old.close();
 
-            WaterMediaVideoPlayer player = new WaterMediaVideoPlayer(new File(selected));
+            ensureLoadHandler();
+
+            WaterMediaVideoPlayer player = new WaterMediaVideoPlayer(file, panel.width(), panel.height());
             players.put(key, player);
-            message("Loaded: " + new File(selected).getName() + " | Shift + right click = pause/play");
-        } catch (Exception e) {
+            player.tickInit();
+            message("Loaded: " + file.getName());
+        } catch (Throwable e) {
             e.printStackTrace();
             message("Could not open video: " + e.getMessage());
         }
@@ -50,11 +62,69 @@ public final class ClientVideoManager {
 
     public WaterMediaVideoPlayer playerFor(PanelLayout panel) {
         WaterMediaVideoPlayer player = players.get(panel.root().asLong());
-        if (player != null) player.tickInit();
+        if (player != null) {
+            player.tickInit();
+            if (!panelStillValid(panel)) {
+                players.remove(panel.root().asLong());
+                player.close();
+                return null;
+            }
+        }
         return player;
     }
 
+    private boolean panelStillValid(PanelLayout panel) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) return false;
+        BlockState root = mc.level.getBlockState(panel.root());
+        if (!(root.getBlock() instanceof com.furk5nn.videoscreen.block.VideoScreenBlock)) return false;
+
+        var right = panel.facing().getClockWise();
+        for (int y = 0; y < panel.height(); y++) {
+            for (int x = 0; x < panel.width(); x++) {
+                BlockPos p = panel.root().relative(right, x).above(y);
+                BlockState s = mc.level.getBlockState(p);
+                if (!(s.getBlock() instanceof com.furk5nn.videoscreen.block.VideoScreenBlock)) return false;
+            }
+        }
+        return true;
+    }
+
+    private void ensureLoadHandler() {
+        if (loadHandlerInstalled) return;
+        if (!Rinku.isInitialized()) {
+            Rinku.scheduleForInit(success -> Minecraft.getInstance().execute(() -> {
+                if (success) installLoadHandlerNow();
+            }));
+            return;
+        }
+        installLoadHandlerNow();
+    }
+
+    private void installLoadHandlerNow() {
+        if (loadHandlerInstalled || !Rinku.isInitialized()) return;
+        loadHandlerInstalled = true;
+        Rinku.getClient().addLoadHandler(new CefLoadHandlerAdapter() {
+            @Override
+            public void onLoadEnd(CefBrowser browser, CefFrame frame, int httpStatusCode) {
+                if (browser == null || frame == null || !frame.isMain()) return;
+                Minecraft.getInstance().execute(() -> {
+                    for (WaterMediaVideoPlayer player : players.values()) {
+                        if (player.browser() != null && player.browser().getIdentifier() == browser.getIdentifier()) {
+                            player.styleVideoDocument();
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+    }
+
     private static void message(String text) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null) {
+            mc.player.displayClientMessage(Component.literal(text), true);
+        }
         System.out.println("[VideoScreen] " + text);
     }
 }
