@@ -2364,3 +2364,395 @@ for java in (DST / "src/main/java/net/montoyo/wd/client/gui").rglob("*.java"):
     java.write_text(text,encoding="utf-8")
 
 print("GUI and registry 26.2 port pass complete")
+
+
+# ===========================================================================
+# CRITICAL INTERACTION PORT: SCREEN / MINEPAD / WDSCREEN
+# ===========================================================================
+
+# EnumProperty factories in 26.2 require the enum class.
+for rel in [
+    "src/main/java/net/montoyo/wd/block/ScreenThinBlock.java",
+    "src/main/java/net/montoyo/wd/block/KeyboardBlockLeft.java",
+]:
+    p = DST / rel
+    if p.exists():
+        text = p.read_text(encoding="utf-8")
+        text = text.replace(
+            'EnumProperty.create("facing", Direction.values())',
+            'EnumProperty.create("facing", Direction.class, Direction.values())'
+        )
+        text = text.replace(
+            'EnumProperty.create("facing", Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST)',
+            'EnumProperty.create("facing", Direction.class, Direction.NORTH, Direction.EAST, Direction.SOUTH, Direction.WEST)'
+        )
+        p.write_text(text, encoding="utf-8")
+
+
+# ScreenBlock: preserve the original Shift+RMB URL/config path and empty-hand
+# interaction while adapting to the split 26.2 item/empty-hand block API.
+screen_block = DST / "src/main/java/net/montoyo/wd/block/ScreenBlock.java"
+if screen_block.exists():
+    text = screen_block.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.world.ItemInteractionResult;\n", "")
+    if "import net.minecraft.server.level.ServerLevel;" not in text:
+        text = text.replace("import net.minecraft.server.level.ServerPlayer;", "import net.minecraft.server.level.ServerPlayer;\nimport net.minecraft.server.level.ServerLevel;")
+    if "import net.minecraft.world.level.redstone.Orientation;" not in text:
+        text = text.replace("import net.minecraft.world.level.material.FluidState;", "import net.minecraft.world.level.material.FluidState;\nimport net.minecraft.world.level.redstone.Orientation;")
+
+    text = replace_method_by_signature(
+        text, "public void onRemove(",
+        """    @Override
+    protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+        for (BlockSide value : BlockSide.values()) {
+            Vector3i vec = new Vector3i(pos.getX(), pos.getY(), pos.getZ());
+            Multiblock.findOrigin(level, vec, value, null);
+            BlockPos origin = new BlockPos(vec.x, vec.y, vec.z);
+            if (!origin.equals(pos)) {
+                level.removeBlockEntity(origin);
+                BlockState originState = level.getBlockState(origin);
+                if (originState.hasProperty(hasTE))
+                    level.setBlock(origin, originState.setValue(hasTE, false), 11);
+            }
+        }
+        super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
+    }"""
+    )
+
+    text = replace_method_by_signature(
+        text, "protected InteractionResult useItemOn(",
+        """    @Override
+    protected InteractionResult useItemOn(ItemStack heldItem, BlockState state, Level world, BlockPos position,
+                                          Player player, InteractionHand hand, BlockHitResult hit) {
+        if (heldItem.isEmpty())
+            return InteractionResult.TRY_WITH_EMPTY_HAND;
+        if (!(heldItem.getItem() instanceof IUpgrade) || heldItem.getItem() instanceof ItemLaserPointer)
+            return InteractionResult.PASS;
+        return handleScreenInteraction(state, world, position, player, hand, hit, heldItem);
+    }
+
+    @Override
+    protected InteractionResult useWithoutItem(BlockState state, Level world, BlockPos position,
+                                               Player player, BlockHitResult hit) {
+        return handleScreenInteraction(state, world, position, player, InteractionHand.MAIN_HAND, hit, ItemStack.EMPTY);
+    }
+
+    private InteractionResult handleScreenInteraction(BlockState state, Level world, BlockPos position,
+                                                      Player player, InteractionHand hand, BlockHitResult hit,
+                                                      ItemStack heldItem) {
+        boolean isUpgrade = !heldItem.isEmpty() && heldItem.getItem() instanceof IUpgrade;
+
+        if (world.isClientSide())
+            return InteractionResult.SUCCESS;
+
+        boolean sneaking = player.isShiftKeyDown();
+        Vector3i pos = new Vector3i(position);
+        BlockSide side = BlockSide.values()[hit.getDirection().ordinal()];
+
+        Multiblock.findOrigin(world, pos, side, null);
+        ScreenBlockEntity te = (ScreenBlockEntity) world.getBlockEntity(pos.toBlock());
+
+        if (te != null && te.getScreen(side) != null) {
+            ScreenData scr = te.getScreen(side);
+
+            if (sneaking && !isUpgrade) {
+                if ((scr.rightsFor(player) & ScreenRights.CHANGE_URL) == 0)
+                    Util.toast(player, "restrictions");
+                else if (player instanceof ServerPlayer serverPlayer)
+                    new SetURLData(pos, scr.side, scr.url).sendTo(serverPlayer);
+                return InteractionResult.SUCCESS;
+            }
+
+            if (isUpgrade) {
+                if (!te.hasUpgrade(side, heldItem)) {
+                    if ((scr.rightsFor(player) & ScreenRights.MANAGE_UPGRADES) == 0) {
+                        Util.toast(player, "restrictions");
+                        return InteractionResult.CONSUME;
+                    }
+                    if (te.addUpgrade(side, heldItem, player, false)) {
+                        if (!player.isCreative()) heldItem.shrink(1);
+                        Util.toast(player, ChatFormatting.AQUA, "upgradeOk");
+                    } else {
+                        Util.toast(player, "upgradeError");
+                    }
+                }
+                return InteractionResult.CONSUME;
+            }
+
+            if ((scr.rightsFor(player) & ScreenRights.INTERACT) == 0) {
+                Util.toast(player, "restrictions");
+                return InteractionResult.CONSUME;
+            }
+
+            Vector2i tmp = new Vector2i();
+            float hitX = (float) hit.getLocation().x - te.getBlockPos().getX();
+            float hitY = (float) hit.getLocation().y - te.getBlockPos().getY();
+            float hitZ = (float) hit.getLocation().z - te.getBlockPos().getZ();
+            if (hit2pixels(side, hit.getBlockPos(), new Vector3i(hit.getBlockPos()), scr, hitX, hitY, hitZ, tmp))
+                te.click(side, tmp);
+            return InteractionResult.CONSUME;
+        }
+
+        if (isUpgrade)
+            return InteractionResult.PASS;
+
+        Vector2i size = Multiblock.measure(world, pos, side);
+        if (size.x < 2 && size.y < 2) {
+            Util.toast(player, "tooSmall");
+            return InteractionResult.SUCCESS;
+        }
+        if (size.x > CommonConfig.Screen.maxScreenSizeX || size.y > CommonConfig.Screen.maxScreenSizeY) {
+            Util.toast(player, "tooBig", CommonConfig.Screen.maxScreenSizeX, CommonConfig.Screen.maxScreenSizeY);
+            return InteractionResult.SUCCESS;
+        }
+        Vector3i err = Multiblock.check(world, pos, size, side);
+        if (err != null) {
+            Util.toast(player, "invalid", err.toString());
+            return InteractionResult.SUCCESS;
+        }
+
+        Log.info("Player %s (UUID %s) created a screen at %s of size %dx%d",
+                player.getName(), player.getGameProfile().id().toString(), pos.toString(), size.x, size.y);
+
+        if (te == null) {
+            BlockPos origin = pos.toBlock();
+            world.setBlockAndUpdate(origin, world.getBlockState(origin).setValue(hasTE, true));
+            te = (ScreenBlockEntity) world.getBlockEntity(origin);
+        }
+        if (te != null)
+            te.addScreen(side, size, null, player, true);
+        return InteractionResult.SUCCESS;
+    }"""
+    )
+
+    # Current neighborChanged no longer includes the source position.
+    text = re.sub(
+        r'@Override\s+public void neighborChanged\(BlockState state, Level world, BlockPos pos, Block block, BlockPos source,\s*boolean isMoving\)',
+        '@Override\\n    protected void neighborChanged(BlockState state, Level world, BlockPos pos, Block block, Orientation orientation, boolean isMoving)',
+        text
+    )
+
+    # NeoForge 26.2 supplies the tool ItemStack to onDestroyedByPlayer.
+    text = re.sub(
+        r'public boolean onDestroyedByPlayer\(BlockState state, Level level, BlockPos pos, Player player,\s*boolean willHarvest, FluidState fluid\)',
+        'public boolean onDestroyedByPlayer(BlockState state, Level level, BlockPos pos, Player player,\\n                                       ItemStack tool, boolean willHarvest, FluidState fluid)',
+        text
+    )
+    text = text.replace(
+        "super.onDestroyedByPlayer(state, level, pos, player, willHarvest, fluid)",
+        "super.onDestroyedByPlayer(state, level, pos, player, tool, willHarvest, fluid)"
+    )
+    text = text.replace("world.isClientSide", "world.isClientSide()")
+    text = text.replace("!world.isClientSide()", "!world.isClientSide()")
+    screen_block.write_text(text, encoding="utf-8")
+
+
+# MinePad: preserve upgraded tooltip, Shift+RMB URL GUI, persistent PadID, and
+# throw/break behavior using current Item/CompoundTag contracts.
+minepad = DST / "src/main/java/net/montoyo/wd/item/ItemMinePad2.java"
+if minepad.exists():
+    minepad.write_text("""package net.montoyo.wd.item;
+
+import net.minecraft.ChatFormatting;
+import net.minecraft.core.UUIDUtil;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.TooltipFlag;
+import net.minecraft.world.item.component.CustomData;
+import net.minecraft.world.item.component.TooltipDisplay;
+import net.minecraft.world.level.Level;
+import net.montoyo.wd.WebDisplays;
+import net.montoyo.wd.config.CommonConfig;
+import net.montoyo.wd.core.CraftComponent;
+import net.montoyo.wd.net.WDNetworkRegistry;
+import net.montoyo.wd.net.server_bound.C2SMessageMinepadUrl;
+
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import java.util.UUID;
+import java.util.function.Consumer;
+
+public class ItemMinePad2 extends Item implements WDItem {
+    private final boolean upgraded;
+
+    public ItemMinePad2(Properties properties, boolean upgraded) {
+        super(properties.stacksTo(1));
+        this.upgraded = upgraded;
+    }
+
+    public boolean isUpgraded() { return upgraded; }
+
+    @Override
+    public void appendHoverText(ItemStack stack, TooltipContext context, TooltipDisplay display,
+                                Consumer<Component> tooltip, TooltipFlag flag) {
+        super.appendHoverText(stack, context, display, tooltip, flag);
+        if (upgraded)
+            tooltip.accept(Component.translatable("webdisplays.minepad2.info").withStyle(ChatFormatting.RED));
+    }
+
+    private static String getURL(ItemStack stack) {
+        CompoundTag tag = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
+        return tag.isEmpty() || !tag.contains("PadURL")
+                ? CommonConfig.Browser.homepage
+                : tag.getStringOr("PadURL", CommonConfig.Browser.homepage);
+    }
+
+    private static UUID readPadId(CompoundTag tag) {
+        return tag.read("PadID", UUIDUtil.CODEC).orElse(new UUID(0L, 0L));
+    }
+
+    @Override
+    @Nonnull
+    public InteractionResult use(Level world, Player player, @Nonnull InteractionHand hand) {
+        ItemStack stack = player.getItemInHand(hand);
+
+        if (player.isShiftKeyDown()) {
+            if (world.isClientSide())
+                WebDisplays.PROXY.displaySetPadURLGui(stack, getURL(stack));
+            return InteractionResult.SUCCESS;
+        }
+
+        CompoundTag tag = stack.getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
+        if (!tag.isEmpty() && tag.contains("PadID")) {
+            if (world.isClientSide())
+                WebDisplays.PROXY.openMinePadGui(readPadId(tag));
+            return InteractionResult.SUCCESS;
+        }
+
+        UUID uuid = UUID.randomUUID();
+        String url = getURL(stack);
+        if (world.isClientSide())
+            WDNetworkRegistry.sendToServer(new C2SMessageMinepadUrl(uuid, url));
+
+        CompoundTag newTag = new CompoundTag();
+        newTag.store("PadID", UUIDUtil.CODEC, uuid);
+        newTag.putString("PadURL", url);
+        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(newTag));
+        return InteractionResult.SUCCESS;
+    }
+
+    @Override
+    public boolean onEntityItemUpdate(ItemStack stack, ItemEntity entity) {
+        if (entity.onGround() && !entity.level().isClientSide()) {
+            CompoundTag tag = entity.getItem().getOrDefault(DataComponents.CUSTOM_DATA, CustomData.EMPTY).copyTag();
+            if (!tag.isEmpty() && tag.contains("ThrowHeight")) {
+                double height = tag.getDoubleOr("ThrowHeight", 0.0);
+                UUID thrower = null;
+                if (tag.contains("ThrowerMSB") && tag.contains("ThrowerLSB"))
+                    thrower = new UUID(tag.getLongOr("ThrowerMSB", 0L), tag.getLongOr("ThrowerLSB", 0L));
+
+                if (tag.contains("PadID") || tag.contains("PadURL")) {
+                    tag.remove("ThrowerMSB");
+                    tag.remove("ThrowerLSB");
+                    tag.remove("ThrowHeight");
+                    entity.getItem().set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
+                } else {
+                    entity.getItem().remove(DataComponents.CUSTOM_DATA);
+                }
+
+                if (thrower != null && height - entity.getBlockY() >= 20.0) {
+                    entity.level().playSound(null, entity.getBlockX(), entity.getBlockY(), entity.getBlockZ(),
+                            SoundEvents.GLASS_BREAK, SoundSource.BLOCKS, 4.0f, 1.0f);
+                    entity.level().addFreshEntity(new ItemEntity(entity.level(), entity.getBlockX(), entity.getBlockY(),
+                            entity.getBlockZ(), CraftComponent.EXTCARD.makeItemStack()));
+                    entity.setRemoved(Entity.RemovalReason.CHANGED_DIMENSION);
+                }
+            }
+        }
+        return false;
+    }
+
+    @Nullable
+    @Override
+    public String getWikiName(@Nonnull ItemStack stack) {
+        return stack.getItem().getName(stack).getString();
+    }
+}
+""", encoding="utf-8")
+
+
+# WDScreen modern event bridge cleanup: primitive overloads are internal helpers,
+# only event-object overloads override Minecraft 26.2.
+wdscreen = DST / "src/main/java/net/montoyo/wd/client/gui/WDScreen.java"
+if wdscreen.exists():
+    text = wdscreen.read_text(encoding="utf-8")
+    text = text.replace("import com.mojang.blaze3d.systems.RenderSystem;\n", "")
+    text = text.replace("RenderSystem.setShaderColor(1.f, 1.f, 1.f, 1.f);\n", "")
+    text = text.replace("renderBackground(poseStack, mouseX, mouseY, ptt);", "extractBackground(poseStack, mouseX, mouseY, ptt);")
+    text = text.replace("return up || super.keyReleased(keyCode, scanCode, modifiers);", "return up;")
+    text = re.sub(
+        r'@Override\s+public void resize\(Minecraft minecraft, int width, int height\)',
+        '@Override\\n    public void resize(int width, int height)',
+        text
+    )
+    text = text.replace("super.resize(minecraft, width, height);", "super.resize(width, height);")
+    text = text.replace("minecraft.setScreen(", "minecraft.gui.setScreen(")
+    text = text.replace("poseStack.renderTooltip(Minecraft.getInstance().font, is, x, y);",
+                        "poseStack.setTooltipForNextFrame(Minecraft.getInstance().font, is, x, y);")
+    text = text.replace("poseStack.renderTooltip(Minecraft.getInstance().font, lines.stream().map(a -> FormattedCharSequence.forward(a, Style.EMPTY)).collect(Collectors.toList()), x, y);",
+                        "poseStack.setTooltipForNextFrame(Minecraft.getInstance().font, lines.stream().map(a -> FormattedCharSequence.forward(a, Style.EMPTY)).collect(Collectors.toList()), x, y);")
+
+    # Remove @Override only from the legacy primitive helper signatures.
+    for signature in [
+        "public boolean charTyped(char codePoint, int modifiers)",
+        "public boolean mouseClicked(double mouseX, double mouseY, int button)",
+        "public boolean mouseReleased(double mouseX, double mouseY, int button)",
+        "public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY)",
+        "public boolean keyPressed(int keyCode, int scanCode, int modifiers)",
+        "public boolean keyReleased(int keyCode, int scanCode, int modifiers)",
+    ]:
+        text = text.replace("    @Override\n    " + signature, "    " + signature)
+
+    wdscreen.write_text(text, encoding="utf-8")
+
+
+# Remove obsolete crosshair mixin entirely for compile isolation. The actual HUD
+# cursor gets a dedicated 26.2 state hook later, not a call to deleted immediate
+# rendering code.
+overlay_mixin = DST / "src/main/java/net/montoyo/wd/mixins/OverlayMixin.java"
+if overlay_mixin.exists():
+    overlay_mixin.write_text("""package net.montoyo.wd.mixins;
+/** 26.2 placeholder; legacy immediate HUD injection was removed. */
+public final class OverlayMixin {}
+""", encoding="utf-8")
+
+# Remove it from mixin config so an empty placeholder is never applied.
+mixin_json = DST / "src/main/resources/webdisplays.mixins.json"
+if mixin_json.exists():
+    import json
+    data = json.loads(mixin_json.read_text(encoding="utf-8"))
+    for key in ("client", "mixins"):
+        if key in data and isinstance(data[key], list):
+            data[key] = [x for x in data[key] if "OverlayMixin" not in x]
+    mixin_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+# Final sanity checks: if these fail, stop in PREPARE instead of feeding stale
+# 1.21 render code to javac and pretending the next 100 errors are new.
+sanity = {
+    "client/gui/controls/Control.java": ["Tesselator", "BufferUploader", "RenderSystem.setShader"],
+    "client/gui/controls/List.java": ["MultiBufferSource", "TextureTarget"],
+    "client/gui/controls/UpgradeGroup.java": ["renderer.entity.ItemRenderer"],
+    "client/gui/GuiMinePad.java": ["BufferUploader", "Tesselator.getInstance"],
+}
+for rel, forbidden in sanity.items():
+    p = DST / "src/main/java/net/montoyo/wd" / rel
+    if not p.exists():
+        raise RuntimeError("Missing generated sanity target: " + str(p))
+    generated = p.read_text(encoding="utf-8")
+    bad = [token for token in forbidden if token in generated]
+    if bad:
+        raise RuntimeError(f"Stale 1.21 render API in {rel}: {bad}")
+
+print("Critical interaction port and sanity checks complete")
