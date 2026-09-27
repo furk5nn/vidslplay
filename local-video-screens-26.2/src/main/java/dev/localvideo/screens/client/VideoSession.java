@@ -15,6 +15,7 @@ final class VideoSession {
     private final ScreenGeometry geometry;
     private final File file;
     private RinkuBrowser browser;
+    private LocalMediaServer mediaServer;
     private boolean closed;
 
     VideoSession(ScreenGeometry geometry, File file) {
@@ -41,11 +42,16 @@ final class VideoSession {
         if (closed || browser != null) return;
 
         int[] size = chooseTextureSize(geometry.width(), geometry.height());
-        browser = Rinku.createBrowser("about:blank", false);
+        try {
+            mediaServer = new LocalMediaServer(file);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return;
+        }
+        browser = Rinku.createBrowser(mediaServer.playerUrl(), false);
         browser.resize(size[0], size[1]);
         browser.setWindowlessFrameRate(TARGET_FPS);
         VideoScreenManager.get().bindBrowser(this, browser);
-        browser.loadURL(file.toURI().toASCIIString());
     }
 
     void styleVideoDocument() {
@@ -84,6 +90,11 @@ final class VideoSession {
         if (old != null) {
             VideoScreenManager.get().unbindBrowser(old);
             old.close();
+        }
+        LocalMediaServer server = mediaServer;
+        mediaServer = null;
+        if (server != null) {
+            server.close();
         }
     }
 
