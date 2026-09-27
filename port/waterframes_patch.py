@@ -161,3 +161,170 @@ pack.write_text("""{
 """, encoding="utf-8")
 
 print("Prepared", DST)
+
+
+# ---------------------------------------------------------------------------
+# Mechanical 1.21.5 -> 26.2 Mojang/NeoForge renames
+# ---------------------------------------------------------------------------
+import re
+
+java_root = DST / "src/main/java"
+for java in java_root.rglob("*.java"):
+    text = java.read_text(encoding="utf-8")
+
+    text = text.replace("import net.minecraft.resources.ResourceLocation;", "import net.minecraft.resources.Identifier;")
+    text = re.sub(r"\bResourceLocation\b", "Identifier", text)
+    text = text.replace("import net.minecraft.Util;", "import net.minecraft.util.Util;")
+    text = text.replace("import net.minecraft.client.gui.GuiGraphics;", "import net.minecraft.client.gui.GuiGraphicsExtractor;")
+    text = re.sub(r"\bGuiGraphics\b", "GuiGraphicsExtractor", text)
+    text = text.replace("import net.minecraft.client.renderer.RenderType;", "import net.minecraft.client.renderer.rendertype.RenderType;")
+
+    # Null-default annotations were removed from the 26.x Minecraft package.
+    text = text.replace("import net.minecraft.FieldsAreNonnullByDefault;\n", "")
+    text = text.replace("import net.minecraft.MethodsReturnNonnullByDefault;\n", "")
+    text = text.replace("@FieldsAreNonnullByDefault\n", "")
+    text = text.replace("@MethodsReturnNonnullByDefault\n", "")
+
+    # Level#isClientSide is a method in 26.2.
+    text = re.sub(r"\.isClientSide\b(?!\s*\()", ".isClientSide()", text)
+
+    # Identifier constructors are factories in 26.2.
+    text = re.sub(
+        r"new Identifier\(\s*([^,\n]+?)\s*,\s*([^)]+?)\s*\)",
+        r"Identifier.fromNamespaceAndPath(\1, \2)",
+        text
+    )
+
+    java.write_text(text, encoding="utf-8")
+
+# WATERViSION is optional; keep WaterFrames functional without its external viewer.
+renderer_wrapper = DST / "src/main/java/me/srrapero720/waterframes/client/rendering/RendererWrapper.java"
+renderer_wrapper.write_text("""package me.srrapero720.waterframes.client.rendering;
+
+import com.mojang.blaze3d.GpuFormat;
+import com.mojang.blaze3d.opengl.FrameBufferCache;
+import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.blaze3d.textures.GpuTexture;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+import org.watermedia.api.image.ImageRenderer;
+
+@OnlyIn(Dist.CLIENT)
+public class RendererWrapper extends AbstractTexture {
+    private static final FrameBufferCache FRAME_BUFFER_CACHE = new FrameBufferCache();
+    private final ImageRenderer renderer;
+    private final ForeignGlTexture[] glTextures;
+
+    public RendererWrapper(final ImageRenderer renderer) {
+        this.renderer = renderer;
+        this.glTextures = new ForeignGlTexture[renderer.textures.length];
+        for (int i = 0; i < glTextures.length; i++) {
+            glTextures[i] = new ForeignGlTexture(renderer.texture(i), renderer.width, renderer.height);
+        }
+        select(renderer.texture(0));
+    }
+
+    private void select(int id) {
+        for (ForeignGlTexture candidate : glTextures) {
+            if (candidate.glId() == id) {
+                if (this.textureView != null) {
+                    try { this.textureView.close(); } catch (Throwable ignored) {}
+                }
+                this.texture = candidate;
+                this.textureView = RenderSystem.getDevice().createTextureView(candidate);
+                this.sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+                return;
+            }
+        }
+    }
+
+    public void update(int id) {
+        select(id);
+    }
+
+    @Override
+    public void close() {
+        if (textureView != null) {
+            try { textureView.close(); } catch (Throwable ignored) {}
+            textureView = null;
+        }
+        texture = null;
+        sampler = null;
+    }
+
+    private static final class ForeignGlTexture extends GlTexture {
+        private boolean disposed;
+
+        private ForeignGlTexture(int glId, int width, int height) {
+            super(GpuTexture.USAGE_TEXTURE_BINDING, "waterframes-image", GpuFormat.RGBA8_UNORM,
+                    width, height, 1, 1, glId, FRAME_BUFFER_CACHE);
+        }
+
+        @Override public void close() { disposed = true; }
+        @Override public boolean isClosed() { return disposed; }
+    }
+}
+""", encoding="utf-8")
+
+texture_wrapper = DST / "src/main/java/me/srrapero720/waterframes/client/rendering/TextureWrapper.java"
+texture_wrapper.write_text("""package me.srrapero720.waterframes.client.rendering;
+
+import com.mojang.blaze3d.GpuFormat;
+import com.mojang.blaze3d.opengl.FrameBufferCache;
+import com.mojang.blaze3d.opengl.GlTexture;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.blaze3d.textures.GpuTexture;
+import net.minecraft.client.renderer.texture.AbstractTexture;
+
+public class TextureWrapper extends AbstractTexture {
+    private static final FrameBufferCache FRAME_BUFFER_CACHE = new FrameBufferCache();
+
+    public TextureWrapper(final int id, final int width, final int height) {
+        ForeignGlTexture foreign = new ForeignGlTexture(id, width, height);
+        this.texture = foreign;
+        this.textureView = RenderSystem.getDevice().createTextureView(foreign);
+        this.sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+    }
+
+    @Override
+    public void close() {
+        if (textureView != null) {
+            try { textureView.close(); } catch (Throwable ignored) {}
+        }
+        textureView = null;
+        texture = null;
+        sampler = null;
+    }
+
+    private static final class ForeignGlTexture extends GlTexture {
+        private boolean disposed;
+        private ForeignGlTexture(int glId, int width, int height) {
+            super(GpuTexture.USAGE_TEXTURE_BINDING, "waterframes-video", GpuFormat.RGBA8_UNORM,
+                    Math.max(1, width), Math.max(1, height), 1, 1, glId, FRAME_BUFFER_CACHE);
+        }
+        @Override public void close() { disposed = true; }
+        @Override public boolean isClosed() { return disposed; }
+    }
+}
+""", encoding="utf-8")
+
+# The old CreativeCore UV mixin targeted a renderer implementation that no longer exists.
+# 26.2 CreativeCore already emits color on its GUI textured vertices, so remove the mixin.
+mixin_json = DST / "src/main/resources/waterframes.mixin.json"
+mixin_json.write_text("""{
+  "required": true,
+  "compatibilityLevel": "JAVA_25",
+  "package": "me.srrapero720.waterframes.mixin.impl",
+  "minVersion": "0.8.7",
+  "mixins": [
+    "MinecraftServerMixin"
+  ]
+}
+""", encoding="utf-8")
+gui_mixin = DST / "src/main/java/me/srrapero720/waterframes/mixin/impl/creativecore/GuiRenderHelperMixin.java"
+if gui_mixin.exists():
+    gui_mixin.unlink()
