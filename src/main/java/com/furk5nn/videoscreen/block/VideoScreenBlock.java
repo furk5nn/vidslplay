@@ -35,8 +35,6 @@ public final class VideoScreenBlock extends Block implements EntityBlock {
         Level level = context.getLevel();
         BlockPos pos = context.getClickedPos();
 
-        // If this block is being added to an existing screen panel, inherit the
-        // panel orientation regardless of which direction the player is looking.
         for (Direction dir : Direction.values()) {
             BlockState neighbor = level.getBlockState(pos.relative(dir));
             if (neighbor.getBlock() instanceof VideoScreenBlock && neighbor.hasProperty(FACING)) {
@@ -44,7 +42,6 @@ public final class VideoScreenBlock extends Block implements EntityBlock {
             }
         }
 
-        // First block of a panel faces the player.
         return defaultBlockState().setValue(FACING, context.getHorizontalDirection().getOpposite());
     }
 
@@ -55,10 +52,15 @@ public final class VideoScreenBlock extends Block implements EntityBlock {
 
     @Override
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
+        if (!player.isShiftKeyDown()) {
+            return InteractionResult.PASS;
+        }
+
         if (level.isClientSide()) {
-            ClientVideoManager.INSTANCE.interact(level, pos, state);
+            ClientVideoManager.INSTANCE.openConfig(level, pos, state);
             return InteractionResult.SUCCESS.withoutItem();
         }
+
         return InteractionResult.SUCCESS_SERVER.withoutItem();
     }
 }
