@@ -1199,7 +1199,7 @@ if renderer.exists():
     s = renderer.read_text(encoding="utf-8")
     s = s.replace(
         "import net.montoyo.wd.config.ClientConfig;",
-        "import net.montoyo.wd.config.ClientConfig;\\nimport net.montoyo.wd.client.LocalMediaManager;"
+        "import net.montoyo.wd.config.ClientConfig;\nimport net.montoyo.wd.client.LocalMediaManager;"
     )
     old = """            if (screen.browser == null) {
                 double distance = WebDisplays.PROXY.distanceTo(be, cameraPosition);
