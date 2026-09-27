@@ -1,0 +1,28 @@
+name: Build Local Video Screens
+
+on:
+  push:
+    branches: [ "local-video-screens-26.2" ]
+    paths:
+      - "local-video-screens-26.2/**"
+      - ".github/workflows/build-local-video-screens.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.2.1'
+      - name: Build isolated mod
+        run: gradle -p local-video-screens-26.2 build --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: localvideoscreens-neoforge-26.2
+          path: local-video-screens-26.2/build/libs/localvideoscreens-*.jar
