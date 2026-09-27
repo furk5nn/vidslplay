@@ -1267,3 +1267,410 @@ if client_proxy.exists():
 """, encoding="utf-8")
 
 print("Prepared", DST)
+
+
+# ===========================================================================
+# FINAL 26.2 NORMALIZATION PASS
+# Run LAST so later source transplants cannot resurrect 1.21.x APIs.
+# ===========================================================================
+java_root = DST / "src/main/java"
+for java in java_root.rglob("*.java"):
+    text = java.read_text(encoding="utf-8")
+
+    # Mojang package/name migrations that may have been reintroduced later.
+    text = text.replace("import net.minecraft.client.gui.GuiGraphics;", "import net.minecraft.client.gui.GuiGraphicsExtractor;")
+    text = re.sub(r"\bGuiGraphics\b", "GuiGraphicsExtractor", text)
+    text = text.replace("import com.mojang.blaze3d.platform.GlStateManager;", "import com.mojang.blaze3d.opengl.GlStateManager;")
+    text = text.replace("import net.minecraft.Util;", "import net.minecraft.util.Util;")
+    text = text.replace("net.minecraft.Util.", "net.minecraft.util.Util.")
+    text = text.replace(".dimension().location()", ".dimension().identifier()")
+
+    # Authlib GameProfile is record-style in the 26.x dependency.
+    text = text.replace(".getGameProfile().getId()", ".getGameProfile().id()")
+    text = text.replace(".getGameProfile().getName()", ".getGameProfile().name()")
+    text = re.sub(r"\bprofile\.getId\(\)", "profile.id()", text)
+    text = re.sub(r"\bprofile\.getName\(\)", "profile.name()", text)
+
+    # Current screen moved behind Minecraft.gui.
+    text = re.sub(r"\bmc\.screen\b", "mc.gui.screen()", text)
+    text = re.sub(r"\bminecraft\.screen\b", "minecraft.gui.screen()", text)
+    text = text.replace("Minecraft.getInstance().screen", "Minecraft.getInstance().gui.screen()")
+    text = re.sub(r"\bmc\.setScreen\(", "mc.gui.setScreen(", text)
+    text = re.sub(r"\bminecraft\.setScreen\(", "minecraft.gui.setScreen(", text)
+    text = text.replace("Minecraft.getInstance().setScreen(", "Minecraft.getInstance().gui.setScreen(")
+
+    # Modifier state moved to Minecraft.
+    text = text.replace("Screen.hasShiftDown()", "Minecraft.getInstance().hasShiftDown()")
+    text = text.replace("Screen.hasControlDown()", "Minecraft.getInstance().hasControlDown()")
+
+    # Camera/Window/Inventory 26.2 accessors.
+    text = re.sub(r"\bcamera\.getEntity\(\)", "camera.entity()", text)
+    text = text.replace("Minecraft.getInstance().getWindow().getWindow()", "Minecraft.getInstance().getWindow()")
+    text = text.replace("ep.getInventory().items", "ep.getInventory().getNonEquipmentItems()")
+
+    # NeoForge/FML current loader state.
+    text = text.replace("FMLEnvironment.dist", "net.neoforged.fml.loading.FMLLoader.getCurrent().getDist()")
+    text = text.replace("FMLEnvironment.production", "net.neoforged.fml.loading.FMLLoader.getCurrent().isProduction()")
+
+    # DirectionProperty migration may have been reintroduced.
+    text = text.replace("import net.minecraft.world.level.block.state.properties.DirectionProperty;",
+                        "import net.minecraft.world.level.block.state.properties.EnumProperty;")
+    text = re.sub(r"\bDirectionProperty\b", "EnumProperty<Direction>", text)
+    text = text.replace("EnumProperty<Direction>.create(", "EnumProperty.create(")
+
+    # Old right-click item result type no longer exists.
+    text = text.replace("import net.minecraft.world.InteractionResultHolder;\n", "")
+    text = re.sub(r"\bInteractionResultHolder<\s*ItemStack\s*>\b", "InteractionResult", text)
+    text = re.sub(r"InteractionResultHolder\.success\([^)]*\)", "InteractionResult.SUCCESS", text)
+    text = re.sub(r"InteractionResultHolder\.pass\([^)]*\)", "InteractionResult.PASS", text)
+
+    java.write_text(text, encoding="utf-8")
+
+
+# NeoForge 26.2 EventBusSubscriber no longer takes the old bus selector here.
+network = DST / "src/main/java/net/montoyo/wd/net/WDNetworkRegistry.java"
+if network.exists():
+    text = network.read_text(encoding="utf-8")
+    text = re.sub(
+        r'@EventBusSubscriber\(\s*modid\s*=\s*"webdisplays"\s*,\s*bus\s*=\s*EventBusSubscriber\.Bus\.MOD\s*\)\s*',
+        '',
+        text
+    )
+    network.write_text(text, encoding="utf-8")
+
+
+# GameProfile pair helper.
+pair = DST / "src/main/java/net/montoyo/wd/utilities/serialization/NameUUIDPair.java"
+if pair.exists():
+    text = pair.read_text(encoding="utf-8")
+    text = text.replace("profile.getName()", "profile.name()")
+    text = text.replace("profile.getId()", "profile.id()")
+    pair.write_text(text, encoding="utf-8")
+
+
+# Persistence owner helpers: retain CompoundTag overloads for packet/custom-data
+# use and add ValueInput/ValueOutput overloads for block-entity persistence.
+util = DST / "src/main/java/net/montoyo/wd/utilities/serialization/Util.java"
+if util.exists():
+    text = util.read_text(encoding="utf-8")
+    if "import net.minecraft.world.level.storage.ValueInput;" not in text:
+        text = text.replace(
+            "import net.minecraft.nbt.CompoundTag;",
+            "import net.minecraft.nbt.CompoundTag;\nimport net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;"
+        )
+    text = text.replace('long msb = tag.getLong("OwnerMSB");', 'long msb = tag.getLongOr("OwnerMSB", 0L);')
+    text = text.replace('long lsb = tag.getLong("OwnerLSB");', 'long lsb = tag.getLongOr("OwnerLSB", 0L);')
+    text = text.replace('String str = tag.getString("OwnerName");', 'String str = tag.getStringOr("OwnerName", "");')
+    if "writeOwnerToNBT(ValueOutput" not in text:
+        insert = """
+    public static void writeOwnerToNBT(ValueOutput output, NameUUIDPair owner) {
+        if (owner != null) {
+            output.putLong("OwnerMSB", owner.uuid.getMostSignificantBits());
+            output.putLong("OwnerLSB", owner.uuid.getLeastSignificantBits());
+            output.putString("OwnerName", owner.name);
+        }
+    }
+
+    public static NameUUIDPair readOwnerFromNBT(ValueInput input) {
+        long msb = input.getLongOr("OwnerMSB", 0L);
+        long lsb = input.getLongOr("OwnerLSB", 0L);
+        String str = input.getStringOr("OwnerName", "");
+        return new NameUUIDPair(str, new UUID(msb, lsb));
+    }
+
+"""
+        text = text.rsplit("}", 1)[0] + insert + "}\n"
+    # Registry#get(id) returns a holder Optional; the value lookup is explicit.
+    text = text.replace(
+        "net.minecraft.core.registries.BuiltInRegistries.ITEM.get(itemId)",
+        "net.minecraft.core.registries.BuiltInRegistries.ITEM.getValue(itemId)"
+    )
+    util.write_text(text, encoding="utf-8")
+
+
+# Peripheral base persistence.
+peripheral = DST / "src/main/java/net/montoyo/wd/entity/AbstractPeripheralBlockEntity.java"
+if peripheral.exists():
+    text = peripheral.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.nbt.CompoundTag;\n", "")
+    text = text.replace("import net.minecraft.core.HolderLookup;\n", "")
+    if "import net.minecraft.world.level.storage.ValueInput;" not in text:
+        text = text.replace(
+            "import net.minecraft.world.level.chunk.LevelChunk;",
+            "import net.minecraft.world.level.chunk.LevelChunk;\nimport net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;"
+        )
+    old_start = text.find("    // TODO\n    @Override\n    public void loadAdditional(")
+    old_end = text.find("    // serializeNBT/deserializeNBT", old_start)
+    if old_start >= 0 and old_end >= 0:
+        replacement = """    @Override
+    protected void loadAdditional(ValueInput input) {
+        super.loadAdditional(input);
+        var child = input.child("WDScreen");
+        if (child.isPresent()) {
+            ValueInput scr = child.get();
+            screenPos = new Vector3i(
+                    scr.getIntOr("X", 0),
+                    scr.getIntOr("Y", 0),
+                    scr.getIntOr("Z", 0));
+            int ordinal = scr.getByteOr("Side", (byte) 0);
+            screenSide = BlockSide.values()[Math.max(0, Math.min(BlockSide.values().length - 1, ordinal))];
+        } else {
+            screenPos = null;
+            screenSide = null;
+        }
+    }
+
+    @Override
+    protected void saveAdditional(ValueOutput output) {
+        super.saveAdditional(output);
+        if (screenPos != null && screenSide != null) {
+            ValueOutput scr = output.child("WDScreen");
+            scr.putInt("X", screenPos.x);
+            scr.putInt("Y", screenPos.y);
+            scr.putInt("Z", screenPos.z);
+            scr.putByte("Side", (byte) screenSide.ordinal());
+        }
+    }
+
+"""
+        text = text[:old_start] + replacement + text[old_end:]
+    peripheral.write_text(text, encoding="utf-8")
+
+
+# Child block entities now override ValueInput/ValueOutput too.
+for rel in [
+    "src/main/java/net/montoyo/wd/entity/ServerBlockEntity.java",
+    "src/main/java/net/montoyo/wd/entity/AbstractInterfaceBlockEntity.java",
+]:
+    p = DST / rel
+    if p.exists():
+        text = p.read_text(encoding="utf-8")
+        text = text.replace("import net.minecraft.nbt.CompoundTag;\n", "")
+        text = text.replace("import net.minecraft.core.HolderLookup;\n", "")
+        if "import net.minecraft.world.level.storage.ValueInput;" not in text:
+            first_import = text.find("import ")
+            text = text[:first_import] + "import net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;\n" + text[first_import:]
+        text = re.sub(
+            r'@Override\s+public void loadAdditional\(CompoundTag tag,\s*net\.minecraft\.core\.HolderLookup\.Provider provider\)\s*\{\s*super\.loadAdditional\(tag, provider\);\s*owner = Util\.readOwnerFromNBT\(tag\);\s*\}',
+            '@Override\\n    protected void loadAdditional(ValueInput input) {\\n        super.loadAdditional(input);\\n        owner = Util.readOwnerFromNBT(input);\\n    }',
+            text, flags=re.S
+        )
+        text = re.sub(
+            r'@Override\s+protected void saveAdditional\(CompoundTag tag,\s*HolderLookup\.Provider provider\)\s*\{\s*super\.saveAdditional\(tag, provider\);\s*Util\.writeOwnerToNBT\(tag, owner\);\s*\}',
+            '@Override\\n    protected void saveAdditional(ValueOutput output) {\\n        super.saveAdditional(output);\\n        Util.writeOwnerToNBT(output, owner);\\n    }',
+            text, flags=re.S
+        )
+        p.write_text(text, encoding="utf-8")
+
+
+redstone = DST / "src/main/java/net/montoyo/wd/entity/RedstoneControlBlockEntity.java"
+if redstone.exists():
+    text = redstone.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.nbt.CompoundTag;\n", "")
+    text = text.replace("import net.minecraft.core.HolderLookup;\n", "")
+    if "import net.minecraft.world.level.storage.ValueInput;" not in text:
+        text = text.replace(
+            "import net.minecraft.world.level.block.state.BlockState;",
+            "import net.minecraft.world.level.block.state.BlockState;\nimport net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;"
+        )
+    text = re.sub(
+        r'@Override\s+public void loadAdditional\(CompoundTag tag,\s*net\.minecraft\.core\.HolderLookup\.Provider provider\)\s*\{.*?\n\s*\}',
+        '''@Override
+    protected void loadAdditional(ValueInput input) {
+        super.loadAdditional(input);
+        risingEdgeURL = input.getStringOr("RisingEdgeURL", "");
+        fallingEdgeURL = input.getStringOr("FallingEdgeURL", "");
+        state = input.getBooleanOr("Powered", false);
+    }''',
+        text, count=1, flags=re.S
+    )
+    text = re.sub(
+        r'@Override\s+protected void saveAdditional\(CompoundTag tag,\s*HolderLookup\.Provider provider\)\s*\{.*?\n\s*\}',
+        '''@Override
+    protected void saveAdditional(ValueOutput output) {
+        super.saveAdditional(output);
+        output.putString("RisingEdgeURL", risingEdgeURL);
+        output.putString("FallingEdgeURL", fallingEdgeURL);
+        output.putBoolean("Powered", state);
+    }''',
+        text, count=1, flags=re.S
+    )
+    text = text.replace(".dimension().location()", ".dimension().identifier()")
+    redstone.write_text(text, encoding="utf-8")
+
+
+# ItemMinePad's use contract returns InteractionResult in 26.2.
+minepad = DST / "src/main/java/net/montoyo/wd/item/ItemMinePad2.java"
+if minepad.exists():
+    text = minepad.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.world.InteractionResultHolder;\n", "")
+    text = re.sub(r"public InteractionResultHolder<ItemStack> use\(", "public InteractionResult use(", text)
+    text = re.sub(r"InteractionResultHolder\.success\([^)]*\)", "InteractionResult.SUCCESS", text)
+    text = re.sub(r"InteractionResultHolder\.pass\([^)]*\)", "InteractionResult.PASS", text)
+    minepad.write_text(text, encoding="utf-8")
+
+
+# ClientProxy final 26.2 compatibility.
+client_proxy = DST / "src/main/java/net/montoyo/wd/client/ClientProxy.java"
+if client_proxy.exists():
+    text = client_proxy.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.client.gui.GuiGraphics;", "import net.minecraft.client.gui.GuiGraphicsExtractor;")
+    text = re.sub(r"\bGuiGraphics\b", "GuiGraphicsExtractor", text)
+    text = text.replace("camera.getEntity()", "camera.entity()")
+    text = text.replace("Screen.hasShiftDown()", "Minecraft.getInstance().hasShiftDown()")
+    text = text.replace("Minecraft.getInstance().getWindow().getWindow()", "Minecraft.getInstance().getWindow()")
+    text = text.replace("ep.getInventory().items", "ep.getInventory().getNonEquipmentItems()")
+    # Offhand is slot 40 in 26.2; keep the same one-entry update semantics.
+    text = text.replace(
+        "updateInventory(ep.getInventory().offhand, ep.getItemInHand(InteractionHand.OFF_HAND), 1);",
+        "updateInventory(net.minecraft.core.NonNullList.of(ItemStack.EMPTY, ep.getInventory().getItem(40)), ep.getItemInHand(InteractionHand.OFF_HAND), 1);"
+    )
+    text = text.replace(".dimension().location()", ".dimension().identifier()")
+    text = text.replace("tag.getString(\"PadURL\")", "tag.getStringOr(\"PadURL\", \"\")")
+    text = text.replace("new KeyMapping(\"webdisplays.key.toggle_mouse\", GLFW.GLFW_KEY_R, \"key.categories.misc\")",
+                        "new KeyMapping(\"webdisplays.key.toggle_mouse\", GLFW.GLFW_KEY_R, KeyMapping.Category.MISC)")
+    # UUID is stored by CustomData; CompoundTag no longer has getUUID helper.
+    text = text.replace(
+        'tag.getUUID("PadID")',
+        'tag.read("PadID", net.minecraft.core.UUIDUtil.CODEC).orElse(new java.util.UUID(0L, 0L))'
+    )
+    # Old crosshair callback used raw immediate GL GUI drawing. Keep the feature
+    # staged out until its 26.2 HUD extraction hook is registered, rather than
+    # issuing invalid RenderSystem state calls.
+    text = remove_java_method(text, "public static void renderCrosshair(")
+    client_proxy.write_text(text, encoding="utf-8")
+
+
+# Mouse mixin current screen accessor.
+mouse_mixin = DST / "src/main/java/net/montoyo/wd/mixins/MouseHandlerMixin.java"
+if mouse_mixin.exists():
+    text = mouse_mixin.read_text(encoding="utf-8")
+    text = text.replace("Minecraft.getInstance().screen", "Minecraft.getInstance().gui.screen()")
+    mouse_mixin.write_text(text, encoding="utf-8")
+
+
+# Main mod loader state and GameProfile record access.
+webdisplays_java = DST / "src/main/java/net/montoyo/wd/WebDisplays.java"
+if webdisplays_java.exists():
+    text = webdisplays_java.read_text(encoding="utf-8")
+    text = text.replace("FMLEnvironment.dist", "net.neoforged.fml.loading.FMLLoader.getCurrent().getDist()")
+    text = text.replace("FMLEnvironment.production", "net.neoforged.fml.loading.FMLLoader.getCurrent().isProduction()")
+    text = text.replace(".getGameProfile().getId()", ".getGameProfile().id()")
+    webdisplays_java.write_text(text, encoding="utf-8")
+
+
+# Direction import lost by the older source migration.
+keyboard_right = DST / "src/main/java/net/montoyo/wd/block/KeyboardBlockRight.java"
+if keyboard_right.exists():
+    text = keyboard_right.read_text(encoding="utf-8")
+    if "import net.minecraft.core.Direction;" not in text:
+        text = text.replace("import net.minecraft.core.BlockPos;", "import net.minecraft.core.BlockPos;\nimport net.minecraft.core.Direction;")
+    keyboard_right.write_text(text, encoding="utf-8")
+
+
+# 26.2 GUI input bridge. Existing WebDisplays screens can retain their legacy
+# overloads; Minecraft calls these event-object overrides.
+wdscreen = DST / "src/main/java/net/montoyo/wd/client/gui/WDScreen.java"
+if wdscreen.exists():
+    text = wdscreen.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.client.gui.GuiGraphics;", "import net.minecraft.client.gui.GuiGraphicsExtractor;")
+    text = re.sub(r"\bGuiGraphics\b", "GuiGraphicsExtractor", text)
+    for imp in [
+        "import net.minecraft.client.input.KeyEvent;",
+        "import net.minecraft.client.input.MouseButtonEvent;",
+        "import net.minecraft.client.input.CharacterEvent;"
+    ]:
+        if imp not in text:
+            text = text.replace("import net.minecraft.client.Minecraft;", "import net.minecraft.client.Minecraft;\n" + imp)
+    # Render entry point.
+    text = text.replace(
+        "public void render(GuiGraphicsExtractor poseStack, int mouseX, int mouseY, float ptt)",
+        "public void extractRenderState(GuiGraphicsExtractor poseStack, int mouseX, int mouseY, float ptt)"
+    )
+    text = text.replace("renderBackground(poseStack, mouseX, mouseY, ptt);", "")
+    text = text.replace("RenderSystem.setShaderColor(1.f, 1.f, 1.f, 1.f);", "")
+    # Tooltips.
+    text = text.replace("poseStack.renderTooltip(Minecraft.getInstance().font, is, x, y);",
+                        "poseStack.setTooltipForNextFrame(Minecraft.getInstance().font, is, x, y);")
+    text = text.replace("poseStack.renderTooltip(Minecraft.getInstance().font, lines.stream().map(a -> FormattedCharSequence.forward(a, Style.EMPTY)).collect(Collectors.toList()), x, y);",
+                        "poseStack.setTooltipForNextFrame(Minecraft.getInstance().font, lines.stream().map(a -> FormattedCharSequence.forward(a, Style.EMPTY)).collect(Collectors.toList()), x, y);")
+    # Add modern event methods before isPauseScreen if not already present.
+    if "mouseClicked(MouseButtonEvent event" not in text:
+        bridge = """
+    @Override
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        return mouseClicked(event.x(), event.y(), event.button());
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        return mouseReleased(event.x(), event.y(), event.button());
+    }
+
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        return mouseDragged(event.x(), event.y(), event.button(), dragX, dragY);
+    }
+
+    @Override
+    public boolean keyPressed(KeyEvent event) {
+        return keyPressed(event.key(), event.scancode(), event.modifiers());
+    }
+
+    @Override
+    public boolean keyReleased(KeyEvent event) {
+        return keyReleased(event.key(), event.scancode(), event.modifiers());
+    }
+
+    @Override
+    public boolean charTyped(CharacterEvent event) {
+        return charTyped((char) event.codepoint(), 0);
+    }
+
+"""
+        text = text.replace("    @Override\n    public boolean isPauseScreen()", bridge + "    @Override\n    public boolean isPauseScreen()")
+    wdscreen.write_text(text, encoding="utf-8")
+
+
+# Final GUI naming migration after all screen/control source copies.
+for java in (DST / "src/main/java/net/montoyo/wd/client/gui").rglob("*.java"):
+    text = java.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.client.gui.GuiGraphics;", "import net.minecraft.client.gui.GuiGraphicsExtractor;")
+    text = re.sub(r"\bGuiGraphics\b", "GuiGraphicsExtractor", text)
+    text = re.sub(r"\bpublic void render\(GuiGraphicsExtractor ", "public void extractRenderState(GuiGraphicsExtractor ", text)
+    text = text.replace("super.render(graphics,", "super.extractRenderState(graphics,")
+    text = text.replace("super.render(poseStack,", "super.extractRenderState(poseStack,")
+    text = text.replace(".drawString(", ".text(")
+    text = text.replace(".renderItemDecorations(", ".itemDecorations(")
+    text = text.replace(".renderItem(", ".item(")
+    text = text.replace(".renderTooltip(", ".setTooltipForNextFrame(")
+    java.write_text(text, encoding="utf-8")
+
+
+# Remove obsolete immediate-mode helper dependencies from the base Control.
+control = DST / "src/main/java/net/montoyo/wd/client/gui/controls/Control.java"
+if control.exists():
+    text = control.read_text(encoding="utf-8")
+    text = text.replace("import com.mojang.blaze3d.platform.GlStateManager;", "import com.mojang.blaze3d.opengl.GlStateManager;")
+    text = text.replace("import net.minecraft.client.renderer.RenderType;", "import net.minecraft.client.renderer.rendertype.RenderType;")
+    # The old FBO helper is not used by 26.2 screen extraction; leave a simple
+    # coordinate-compatible no-op signature until List is migrated below.
+    text = re.sub(
+        r'public void fillRect\(MultiBufferSource\.BufferSource source, int x, double y, int w, int h, int color\) \{.*?\n    \}',
+        'public void fillRect(Object source, int x, double y, int w, int h, int color) { }',
+        text, count=1, flags=re.S
+    )
+    control.write_text(text, encoding="utf-8")
+
+
+# Misc current API normalization that remains safe after generated files exist.
+for java in java_root.rglob("*.java"):
+    text = java.read_text(encoding="utf-8")
+    text = text.replace(".getGameProfile().getId()", ".getGameProfile().id()")
+    text = text.replace(".getGameProfile().getName()", ".getGameProfile().name()")
+    text = text.replace(".dimension().location()", ".dimension().identifier()")
+    text = text.replace("Screen.hasControlDown()", "Minecraft.getInstance().hasControlDown()")
+    text = text.replace("Screen.hasShiftDown()", "Minecraft.getInstance().hasShiftDown()")
+    java.write_text(text, encoding="utf-8")
+
+print("Final 26.2 normalization complete")
