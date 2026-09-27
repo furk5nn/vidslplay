@@ -17,6 +17,8 @@ final class VideoSession {
     private RinkuBrowser browser;
     private LocalMediaServer mediaServer;
     private boolean closed;
+    private int browserWidth = 1;
+    private int browserHeight = 1;
 
     VideoSession(ScreenGeometry geometry, File file) {
         this.geometry = geometry;
@@ -42,6 +44,8 @@ final class VideoSession {
         if (closed || browser != null) return;
 
         int[] size = chooseTextureSize(geometry.width(), geometry.height());
+        browserWidth = size[0];
+        browserHeight = size[1];
         try {
             mediaServer = new LocalMediaServer(file);
         } catch (Exception e) {
@@ -80,6 +84,14 @@ final class VideoSession {
 
     RinkuBrowser browser() {
         return browser;
+    }
+
+    int browserWidth() {
+        return browserWidth;
+    }
+
+    int browserHeight() {
+        return browserHeight;
     }
 
     void close() {
