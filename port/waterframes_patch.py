@@ -910,3 +910,31 @@ s = re.sub(
     s
 )
 cfg.write_text(s, encoding="utf-8")
+
+
+# Final compile fixes from the 26.2 API audit.
+display_screen = DST / "src/main/java/me/srrapero720/waterframes/common/screens/DisplayScreen.java"
+s = display_screen.read_text(encoding="utf-8")
+# 1.21.5 NeoForge config never exposed the 1.21.8 experimental playlist toggle.
+# Keep the stable URL editor path active rather than silently inventing config state.
+s = s.replace("!DisplaysConfig.MULTIMEDIA.useExperimentalPlaylistMode", "true")
+s = s.replace("DisplaysConfig.MULTIMEDIA.useExperimentalPlaylistMode", "false")
+display_screen.write_text(s, encoding="utf-8")
+
+icon_styles = DST / "src/main/java/me/srrapero720/waterframes/common/screens/styles/IconStyles.java"
+s = icon_styles.read_text(encoding="utf-8")
+s = s.replace('new Identifier(WaterFrames.ID, "textures/screen_atlas.png")',
+              'Identifier.fromNamespaceAndPath(WaterFrames.ID, "textures/screen_atlas.png")')
+icon_styles.write_text(s, encoding="utf-8")
+
+remote = DST / "src/main/java/me/srrapero720/waterframes/common/item/RemoteControl.java"
+s = remote.read_text(encoding="utf-8")
+s = s.replace("player.level.isClientSide", "player.level().isClientSide()")
+s = s.replace("opts.keyShift.key.getDisplayName()", "opts.keyShift.getTranslatedKeyMessage()")
+s = s.replace("opts.keyUse.key.getDisplayName()", "opts.keyUse.getTranslatedKeyMessage()")
+remote.write_text(s, encoding="utf-8")
+
+cmd = DST / "src/main/java/me/srrapero720/waterframes/common/commands/WaterFramesCommand.java"
+s = cmd.read_text(encoding="utf-8")
+s = s.replace("profiler.get().getName()", "profiler.get().name()")
+cmd.write_text(s, encoding="utf-8")
