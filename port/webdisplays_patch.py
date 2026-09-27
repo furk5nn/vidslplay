@@ -40,8 +40,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly 'de.keksuccino:mcef:2.2.0-26.1.1'
-    runtimeOnly 'de.keksuccino:mcef-neoforge:2.2.0-26.1.1'
+    implementation 'de.keksuccino:mcef-neoforge:2.2.0-26.1.1'
     implementation fileTree(dir: '../waterframes/build/libs', include: ['*.jar'])
 }
 
