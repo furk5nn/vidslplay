@@ -2756,3 +2756,192 @@ for rel, forbidden in sanity.items():
         raise RuntimeError(f"Stale 1.21 render API in {rel}: {bad}")
 
 print("Critical interaction port and sanity checks complete")
+
+
+# ===========================================================================
+# BLOCK API CLEANUP
+# ===========================================================================
+
+# Mechanical guard against repeated client-side accessor migration.
+for java in (DST / "src/main/java").rglob("*.java"):
+    text = java.read_text(encoding="utf-8")
+    while ".isClientSide()()" in text:
+        text = text.replace(".isClientSide()()", ".isClientSide()")
+    java.write_text(text, encoding="utf-8")
+
+
+# Peripheral blocks: use the current InteractionResult directly and provide the
+# empty-hand path explicitly.
+peripheral = DST / "src/main/java/net/montoyo/wd/block/PeripheralBlock.java"
+if peripheral.exists():
+    text = peripheral.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.world.ItemInteractionResult;\n", "")
+    if "import net.minecraft.world.level.redstone.Orientation;" not in text:
+        text = text.replace("import net.minecraft.world.level.material.PushReaction;",
+                            "import net.minecraft.world.level.material.PushReaction;\nimport net.minecraft.world.level.redstone.Orientation;")
+    text = replace_method_by_signature(
+        text, "protected InteractionResult useItemOn(",
+        """    @Override
+    protected InteractionResult useItemOn(ItemStack stack, BlockState state, Level world, BlockPos pos,
+                                          Player player, InteractionHand hand, BlockHitResult hit) {
+        if (player.isShiftKeyDown() || stack.getItem() instanceof ItemLinker)
+            return InteractionResult.PASS;
+        return interact(world, pos, player, hand);
+    }
+
+    @Override
+    protected InteractionResult useWithoutItem(BlockState state, Level world, BlockPos pos,
+                                               Player player, BlockHitResult hit) {
+        if (player.isShiftKeyDown())
+            return InteractionResult.PASS;
+        return interact(world, pos, player, InteractionHand.MAIN_HAND);
+    }
+
+    private InteractionResult interact(Level world, BlockPos pos, Player player, InteractionHand hand) {
+        BlockEntity te = world.getBlockEntity(pos);
+        if (te instanceof AbstractPeripheralBlockEntity peripheral)
+            return peripheral.onRightClick(player, hand);
+        if (te instanceof ServerBlockEntity server) {
+            server.onPlayerRightClick(player);
+            return InteractionResult.SUCCESS;
+        }
+        return InteractionResult.PASS;
+    }"""
+    )
+    text = re.sub(
+        r'@Override\s+public void neighborChanged\(BlockState state, Level world, BlockPos pos, Block neighborType, BlockPos neighbor, boolean isMoving\)',
+        '@Override\\n    protected void neighborChanged(BlockState state, Level world, BlockPos pos, Block neighborType, Orientation orientation, boolean isMoving)',
+        text
+    )
+    text = text.replace("onNeighborChange(neighborType, neighbor)", "onNeighborChange(neighborType, pos)")
+    text = text.replace("world.isClientSide", "world.isClientSide()")
+    while ".isClientSide()()" in text:
+        text = text.replace(".isClientSide()()", ".isClientSide()")
+    peripheral.write_text(text, encoding="utf-8")
+
+
+# Both keyboard halves use current empty-hand/item interaction and modern
+# removal hook, while retaining paired-half cleanup.
+keyboard_left = DST / "src/main/java/net/montoyo/wd/block/KeyboardBlockLeft.java"
+if keyboard_left.exists():
+    text = keyboard_left.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.world.ItemInteractionResult;\n", "")
+    if "import net.minecraft.server.level.ServerLevel;" not in text:
+        text = text.replace("import net.minecraft.core.Direction;", "import net.minecraft.core.Direction;\nimport net.minecraft.server.level.ServerLevel;")
+    text = replace_method_by_signature(
+        text, "protected @NotNull InteractionResult useItemOn(",
+        """    @Override
+    protected @NotNull InteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos,
+                                                   Player player, InteractionHand hand, BlockHitResult hit) {
+        if (stack.getItem() instanceof ItemLinker)
+            return InteractionResult.PASS;
+        KeyboardBlockEntity keyboard = getTileEntity(state, level, pos);
+        return keyboard == null ? InteractionResult.PASS : keyboard.onRightClick(player, hand);
+    }
+
+    @Override
+    protected @NotNull InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos,
+                                                        Player player, BlockHitResult hit) {
+        KeyboardBlockEntity keyboard = getTileEntity(state, level, pos);
+        return keyboard == null ? InteractionResult.PASS : keyboard.onRightClick(player, InteractionHand.MAIN_HAND);
+    }"""
+    )
+    text = replace_method_by_signature(
+        text, "public void onRemove(",
+        """    @Override
+    protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+        remove(state, level, pos, false, false);
+        super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
+    }"""
+    )
+    text = text.replace("world.isClientSide", "world.isClientSide()")
+    while ".isClientSide()()" in text:
+        text = text.replace(".isClientSide()()", ".isClientSide()")
+    keyboard_left.write_text(text, encoding="utf-8")
+
+
+keyboard_right = DST / "src/main/java/net/montoyo/wd/block/KeyboardBlockRight.java"
+if keyboard_right.exists():
+    text = keyboard_right.read_text(encoding="utf-8")
+    text = text.replace("import net.minecraft.world.ItemInteractionResult;\n", "")
+    if "import net.minecraft.server.level.ServerLevel;" not in text:
+        text = text.replace("import net.minecraft.core.BlockPos;", "import net.minecraft.core.BlockPos;\nimport net.minecraft.server.level.ServerLevel;")
+    text = replace_method_by_signature(
+        text, "protected @NotNull InteractionResult useItemOn(",
+        """    @Override
+    protected @NotNull InteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos,
+                                                   Player player, InteractionHand hand, BlockHitResult hit) {
+        if (stack.getItem() instanceof ItemLinker)
+            return InteractionResult.PASS;
+        KeyboardBlockEntity keyboard = KeyboardBlockLeft.getTileEntity(state, level, pos);
+        return keyboard == null ? InteractionResult.PASS : keyboard.onRightClick(player, hand);
+    }
+
+    @Override
+    protected @NotNull InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos,
+                                                        Player player, BlockHitResult hit) {
+        KeyboardBlockEntity keyboard = KeyboardBlockLeft.getTileEntity(state, level, pos);
+        return keyboard == null ? InteractionResult.PASS : keyboard.onRightClick(player, InteractionHand.MAIN_HAND);
+    }"""
+    )
+    text = replace_method_by_signature(
+        text, "public void onRemove(",
+        """    @Override
+    protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+        remove(state, level, pos, false, false);
+        super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
+    }"""
+    )
+    text = text.replace("world.isClientSide", "world.isClientSide()")
+    while ".isClientSide()()" in text:
+        text = text.replace(".isClientSide()()", ".isClientSide()")
+    keyboard_right.write_text(text, encoding="utf-8")
+
+
+# Direct, deterministic 26.2 block-entity registry. Avoid regex conversion.
+tile = DST / "src/main/java/net/montoyo/wd/registry/TileRegistry.java"
+tile.write_text("""package net.montoyo.wd.registry;
+
+import net.minecraft.core.registries.Registries;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.neoforged.bus.api.IEventBus;
+import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredRegister;
+import net.montoyo.wd.entity.*;
+
+import java.util.Set;
+
+public final class TileRegistry {
+    public static final DeferredRegister<BlockEntityType<?>> TILE_TYPES =
+            DeferredRegister.create(Registries.BLOCK_ENTITY_TYPE, "webdisplays");
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<ScreenBlockEntity>> SCREEN_BLOCK_ENTITY =
+            TILE_TYPES.register("screen", () -> new BlockEntityType<>(
+                    ScreenBlockEntity::new,
+                    Set.of(BlockRegistry.SCREEN_BLOCk.get(), BlockRegistry.SCREEN_THIN_BLOCK.get())));
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<KeyboardBlockEntity>> KEYBOARD =
+            TILE_TYPES.register("kb_left", () -> new BlockEntityType<>(
+                    KeyboardBlockEntity::new, Set.of(BlockRegistry.KEYBOARD_BLOCK.get())));
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<RemoteControlBlockEntity>> REMOTE_CONTROLLER =
+            TILE_TYPES.register("rctrl", () -> new BlockEntityType<>(
+                    RemoteControlBlockEntity::new, Set.of(BlockRegistry.REMOTE_CONTROLLER_BLOCK.get())));
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<RedstoneControlBlockEntity>> REDSTONE_CONTROLLER =
+            TILE_TYPES.register("redctrl", () -> new BlockEntityType<>(
+                    RedstoneControlBlockEntity::new, Set.of(BlockRegistry.REDSTONE_CONTROL_BLOCK.get())));
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<ServerBlockEntity>> SERVER =
+            TILE_TYPES.register("server", () -> new BlockEntityType<>(
+                    ServerBlockEntity::new, Set.of(BlockRegistry.SERVER_BLOCK.get())));
+
+    private TileRegistry() {}
+
+    public static void init(IEventBus bus) {
+        TILE_TYPES.register(bus);
+    }
+}
+""", encoding="utf-8")
+
+print("Block API cleanup complete")
