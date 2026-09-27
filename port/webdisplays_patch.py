@@ -990,6 +990,272 @@ if client_proxy.exists():
     )
     client_proxy.write_text(s, encoding="utf-8")
 
+
+# Client-only local media registry. Paths never leave the client and are not
+# serialized into world/chunk data.
+client_dir = DST / "src/main/java/net/montoyo/wd/client"
+(client_dir / "LocalMediaManager.java").write_text("""package net.montoyo.wd.client;
+
+import me.srrapero720.waterframes.api.LocalMediaPlayer;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.level.Level;
+import net.montoyo.wd.entity.ScreenBlockEntity;
+import net.montoyo.wd.entity.ScreenData;
+import net.montoyo.wd.utilities.data.BlockSide;
+
+import java.io.File;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.Map;
+
+public final class LocalMediaManager {
+    public static final LocalMediaManager INSTANCE = new LocalMediaManager();
+
+    private final Map<Level, Map<Key, LocalMediaPlayer>> players = new IdentityHashMap<>();
+
+    private LocalMediaManager() {}
+
+    public synchronized void open(ScreenBlockEntity blockEntity, BlockSide side, File file) throws Exception {
+        Level level = blockEntity.getLevel();
+        if (level == null) throw new IllegalStateException("Screen is not in a level");
+
+        Key key = new Key(blockEntity.getBlockPos().asLong(), side.ordinal());
+        Map<Key, LocalMediaPlayer> levelPlayers = players.computeIfAbsent(level, ignored -> new HashMap<>());
+
+        LocalMediaPlayer old = levelPlayers.remove(key);
+        if (old != null) old.close();
+
+        ScreenData screen = blockEntity.getScreen(side);
+        if (screen != null && screen.browser != null) {
+            screen.browser.close(true);
+            screen.browser = null;
+        }
+
+        levelPlayers.put(key, new LocalMediaPlayer(file.getCanonicalFile().toURI()));
+    }
+
+    public synchronized Identifier texture(ScreenBlockEntity blockEntity, BlockSide side) {
+        LocalMediaPlayer player = player(blockEntity, side);
+        return player == null ? null : player.texture();
+    }
+
+    public synchronized boolean has(ScreenBlockEntity blockEntity, BlockSide side) {
+        return player(blockEntity, side) != null;
+    }
+
+    public synchronized boolean isLoading(ScreenBlockEntity blockEntity, BlockSide side) {
+        LocalMediaPlayer player = player(blockEntity, side);
+        return player != null && player.isLoading();
+    }
+
+    public synchronized void clear(ScreenBlockEntity blockEntity, BlockSide side) {
+        Level level = blockEntity.getLevel();
+        if (level == null) return;
+        Map<Key, LocalMediaPlayer> levelPlayers = players.get(level);
+        if (levelPlayers == null) return;
+        LocalMediaPlayer player = levelPlayers.remove(new Key(blockEntity.getBlockPos().asLong(), side.ordinal()));
+        if (player != null) player.close();
+        if (levelPlayers.isEmpty()) players.remove(level);
+    }
+
+    public synchronized void clearLevel(Level level) {
+        Map<Key, LocalMediaPlayer> levelPlayers = players.remove(level);
+        if (levelPlayers == null) return;
+        for (LocalMediaPlayer player : levelPlayers.values()) player.close();
+        levelPlayers.clear();
+    }
+
+    private LocalMediaPlayer player(ScreenBlockEntity blockEntity, BlockSide side) {
+        Level level = blockEntity.getLevel();
+        if (level == null) return null;
+        Map<Key, LocalMediaPlayer> levelPlayers = players.get(level);
+        return levelPlayers == null ? null : levelPlayers.get(new Key(blockEntity.getBlockPos().asLong(), side.ordinal()));
+    }
+
+    private record Key(long pos, int side) {}
+}
+""", encoding="utf-8")
+
+# Existing Shift+right-click Set URL GUI gets one extra button, nothing else is
+# replaced or moved.
+gui = DST / "src/main/java/net/montoyo/wd/client/gui/GuiSetURL2.java"
+if gui.exists():
+    s = gui.read_text(encoding="utf-8")
+    s = s.replace("import net.montoyo.wd.client.ClientProxy;", "import net.montoyo.wd.client.ClientProxy;\nimport net.montoyo.wd.client.LocalMediaManager;")
+    if "org.lwjgl.util.tinyfd.TinyFileDialogs" not in s:
+        s = s.replace("import java.io.IOException;", "import java.io.IOException;\nimport java.io.File;\nimport org.lwjgl.util.tinyfd.TinyFileDialogs;")
+
+    s = s.replace(
+        "\\t@FillControl\\n\\tprivate Button btnOk;",
+        "\\t@FillControl\\n\\tprivate Button btnOk;\\n\\n\\t@FillControl\\n\\tprivate Button btnLocalFile;"
+    )
+
+    old = """\t\telse if (ev.getSource() == btnOk)
+\t\t\tvalidate(tfURL.getText());
+\t\telse if (ev.getSource() == btnShutDown) {"""
+    new = """\t\telse if (ev.getSource() == btnOk)
+\t\t\tvalidate(tfURL.getText());
+\t\telse if (ev.getSource() == btnLocalFile && !isPad) {
+\t\t\tString selected = TinyFileDialogs.tinyfd_openFileDialog(
+\t\t\t\t\t"Choose local MP4",
+\t\t\t\t\t"",
+\t\t\t\t\tnew String[]{"*.mp4"},
+\t\t\t\t\t"MP4 video",
+\t\t\t\t\tfalse
+\t\t\t);
+\t\t\tif (selected != null && !selected.isBlank()) {
+\t\t\t\ttry {
+\t\t\t\t\tFile file = new File(selected);
+\t\t\t\t\tif (!file.isFile() || !file.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".mp4"))
+\t\t\t\t\t\tthrow new IOException("Please choose an .mp4 file");
+\t\t\t\t\tLocalMediaManager.INSTANCE.open(tileEntity, screenSide, file);
+\t\t\t\t\tminecraft.setScreen(null);
+\t\t\t\t} catch (Exception ex) {
+\t\t\t\t\tthrow new RuntimeException("Could not open local video", ex);
+\t\t\t\t}
+\t\t\t}
+\t\t}
+\t\telse if (ev.getSource() == btnShutDown) {"""
+    s = s.replace(old, new)
+
+    # Returning to a normal URL cleanly shuts down the local WaterFrames player.
+    s = s.replace(
+        "\\tprivate void validate(String url) {\\n\\t\\tif (!url.isEmpty()) {",
+        "\\tprivate void validate(String url) {\\n\\t\\tif (!isPad && tileEntity != null) LocalMediaManager.INSTANCE.clear(tileEntity, screenSide);\\n\\t\\tif (!url.isEmpty()) {"
+    )
+    gui.write_text(s, encoding="utf-8")
+
+# Add the button under the existing URL field. Preserve the original GUI and
+# its OK/Cancel layout, merely shift that row down.
+gui_json = DST / "src/main/resources/assets/webdisplays/gui/seturl.json"
+gui_json.write_text("""{
+  "controls": [
+    {
+      "type": "Label",
+      "label": "$webdisplays.gui.seturl.url",
+      "x": 0,
+      "y": 0,
+      "shadowed": true
+    },
+    {
+      "type": "TextField",
+      "name": "tfURL",
+      "x": 0,
+      "y": 12,
+      "width": 272,
+      "maxLength": 65535
+    },
+    {
+      "type": "YTButton",
+      "x": 276,
+      "y": 13,
+      "width": 20,
+      "urlField": "tfURL"
+    },
+    {
+      "type": "Button",
+      "name": "btnLocalFile",
+      "label": "Yerel Dosya...",
+      "x": 0,
+      "y": 38,
+      "width": 296,
+      "visible": "1 - isPad",
+      "disabled": "isPad"
+    },
+    {
+      "type": "Button",
+      "name": "btnShutDown",
+      "label": "$webdisplays.gui.seturl.shutdown",
+      "x": 0,
+      "y": "isPad & 38 | 66",
+      "width": 96,
+      "visible": "isPad",
+      "disabled": "1 - isPad"
+    },
+    {
+      "type": "Button",
+      "name": "btnCancel",
+      "label": "$webdisplays.gui.seturl.cancel",
+      "x": "isPad & 100 | 0",
+      "y": "isPad & 38 | 66",
+      "width": "isPad & 96 | 146"
+    },
+    {
+      "type": "Button",
+      "name": "btnOk",
+      "label": "$webdisplays.gui.seturl.ok",
+      "x": "isPad & 200 | 150",
+      "y": "isPad & 38 | 66",
+      "width": "isPad & 96 | 146"
+    }
+  ],
+  "center": true
+}
+""", encoding="utf-8")
+
+# Prefer a local WaterFrames texture over MCEF for that exact screen side.
+renderer = render_dir / "ScreenRenderer.java"
+if renderer.exists():
+    s = renderer.read_text(encoding="utf-8")
+    s = s.replace(
+        "import net.montoyo.wd.config.ClientConfig;",
+        "import net.montoyo.wd.config.ClientConfig;\\nimport net.montoyo.wd.client.LocalMediaManager;"
+    )
+    old = """            if (screen.browser == null) {
+                double distance = WebDisplays.PROXY.distanceTo(be, cameraPosition);
+                if (distance <= WebDisplays.INSTANCE.loadDistance2) {
+                    screen.createBrowser(be, true);
+                }
+            }
+
+            if (!(screen.browser instanceof MCEFBrowser browser)) continue;
+            if (browser.getRenderer() == null || browser.getRenderer().getTextureID() <= 0) continue;
+
+            Identifier texture = BrowserTextureBridge.texture(
+                    browser,
+                    screen.rotation.isVertical ? screen.resolution.y : screen.resolution.x,
+                    screen.rotation.isVertical ? screen.resolution.x : screen.resolution.y
+            );
+            if (texture == null) continue;"""
+    new = """            Identifier texture;
+            if (LocalMediaManager.INSTANCE.has(be, screen.side)) {
+                texture = LocalMediaManager.INSTANCE.texture(be, screen.side);
+                if (texture == null) continue;
+            } else {
+                if (screen.browser == null) {
+                    double distance = WebDisplays.PROXY.distanceTo(be, cameraPosition);
+                    if (distance <= WebDisplays.INSTANCE.loadDistance2) {
+                        screen.createBrowser(be, true);
+                    }
+                }
+
+                if (!(screen.browser instanceof MCEFBrowser browser)) continue;
+                if (browser.getRenderer() == null || browser.getRenderer().getTextureID() <= 0) continue;
+
+                texture = BrowserTextureBridge.texture(
+                        browser,
+                        screen.rotation.isVertical ? screen.resolution.y : screen.resolution.x,
+                        screen.rotation.isVertical ? screen.resolution.x : screen.resolution.y
+                );
+                if (texture == null) continue;
+            }"""
+    s = s.replace(old, new)
+    renderer.write_text(s, encoding="utf-8")
+
+# Close client-local players when their world unloads.
+client_proxy = DST / "src/main/java/net/montoyo/wd/client/ClientProxy.java"
+if client_proxy.exists():
+    s = client_proxy.read_text(encoding="utf-8")
+    needle = """\tpublic void onWorldUnload(LevelEvent.Unload ev) {
+\t\tLog.info("World unloaded; killing screens...");
+\t\tif (ev.getLevel() instanceof Level level) {"""
+    replacement = """\tpublic void onWorldUnload(LevelEvent.Unload ev) {
+\t\tLog.info("World unloaded; killing screens...");
+\t\tif (ev.getLevel() instanceof Level level) {
+\t\t\tLocalMediaManager.INSTANCE.clearLevel(level);"""
+    s = s.replace(needle, replacement)
+    client_proxy.write_text(s, encoding="utf-8")
+
 # Current resource metadata.
 (DST / "src/main/resources/pack.mcmeta").write_text("""{
   "pack": {
