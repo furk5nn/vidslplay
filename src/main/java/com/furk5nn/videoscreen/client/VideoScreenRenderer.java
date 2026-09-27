@@ -34,7 +34,7 @@ public final class VideoScreenRenderer implements BlockEntityRenderer<VideoScree
         if (!blockState.hasProperty(VideoScreenBlock.FACING)) return;
 
         PanelLayout panel = PanelLayout.find(be.getLevel(), be.getBlockPos(), blockState);
-        ChromiumVideoPlayer player = ClientVideoManager.INSTANCE.playerFor(panel);
+        WaterMediaVideoPlayer player = ClientVideoManager.INSTANCE.playerFor(panel);
         if (player == null || !player.isReady()) return;
 
         state.texture = player.texture();
