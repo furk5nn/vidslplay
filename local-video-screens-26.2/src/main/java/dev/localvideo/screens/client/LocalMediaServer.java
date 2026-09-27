@@ -46,30 +46,57 @@ final class LocalMediaServer implements AutoCloseable {
                 return;
             }
 
-            byte[] html = """
+            String mediaMime = mimeType(file.getName());
+            String safeName = escapeHtml(file.getName());
+            byte[] html = ("""
                     <!doctype html>
                     <html>
                     <head>
                       <meta charset="utf-8">
                       <style>
-                        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}
+                        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:monospace}
                         video{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+                        #diag{position:fixed;left:12px;top:12px;z-index:10;max-width:calc(100%% - 24px);
+                              padding:8px 10px;background:rgba(0,0,0,.72);font-size:15px;line-height:1.35;
+                              white-space:pre-wrap;pointer-events:none}
                       </style>
                     </head>
                     <body>
-                      <video id="v" autoplay muted playsinline preload="auto" src="/media"></video>
+                      <video id="v" autoplay muted playsinline preload="auto" controls src="/media"></video>
+                      <div id="diag">PLAYER PAGE LOADED
+                    file: %s
+                    mime: %s
+                    bytes: %d
+                    state: waiting for media...</div>
                       <script>
                         const v=document.getElementById('v');
-                        const start=()=>v.play().then(()=>{
-                          setTimeout(()=>{ try { v.muted=false; v.volume=1.0; } catch(e){} },250);
-                        }).catch(()=>{});
+                        const d=document.getElementById('diag');
+                        const names={1:'MEDIA_ERR_ABORTED',2:'MEDIA_ERR_NETWORK',3:'MEDIA_ERR_DECODE',4:'MEDIA_ERR_SRC_NOT_SUPPORTED'};
+                        const show=(msg)=>{
+                          const err=v.error ? (names[v.error.code]||('MEDIA_ERROR_'+v.error.code)) : 'none';
+                          d.textContent='PLAYER PAGE LOADED\n'
+                            +'file: %s\n'
+                            +'mime: %s\n'
+                            +'state: '+msg+'\n'
+                            +'readyState: '+v.readyState+' networkState: '+v.networkState+'\n'
+                            +'error: '+err+'\n'
+                            +'currentSrc: '+v.currentSrc;
+                        };
+                        ['loadstart','loadedmetadata','loadeddata','canplay','playing','pause','stalled','suspend','waiting','ended','emptied']
+                          .forEach(e=>v.addEventListener(e,()=>show(e)));
+                        v.addEventListener('error',()=>show('ERROR'));
+                        const start=()=>{
+                          show('play() requested');
+                          v.play().then(()=>show('play() resolved')).catch(e=>show('play() rejected: '+e.name+': '+e.message));
+                        };
                         v.addEventListener('loadeddata', start, {once:true});
                         v.addEventListener('canplay', start, {once:true});
                         start();
                       </script>
                     </body>
                     </html>
-                    """.getBytes(StandardCharsets.UTF_8);
+                    """).formatted(safeName, mediaMime, file.length(), safeName, mediaMime)
+                    .getBytes(StandardCharsets.UTF_8);
 
             Headers h = exchange.getResponseHeaders();
             h.set("Content-Type", "text/html; charset=utf-8");
@@ -162,6 +189,13 @@ final class LocalMediaServer implements AutoCloseable {
         } finally {
             exchange.close();
         }
+    }
+
+    private static String escapeHtml(String value) {
+        return value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 
     private static String mimeType(String name) {
