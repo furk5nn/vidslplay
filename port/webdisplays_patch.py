@@ -133,47 +133,58 @@ for java in (DST / "src/main/java").rglob("*.java"):
 
     # Entity/package moves.
     s = s.replace("net.minecraft.world.entity.animal.Ocelot", "net.minecraft.world.entity.animal.feline.Ocelot")
-    s = s.replace("net.minecraft.advancements.critereon.", "net.minecraft.advancements.criterion.")
 
-    # Block interaction API collapsed back to InteractionResult in 26.2.
-    s = s.replace("import net.minecraft.world.ItemInteractionResult;\\n", "")
-    s = s.replace("import net.minecraft.world.InteractionResultHolder;\\n", "")
-    s = re.sub(r"\\bItemInteractionResult\\b", "InteractionResult", s)
-    s = re.sub(r"\\bInteractionResultHolder<\\s*ItemStack\\s*>\\b", "InteractionResult", s)
-    s = re.sub(r"InteractionResultHolder\\.success\\([^)]*\\)", "InteractionResult.SUCCESS", s)
-    s = re.sub(r"InteractionResultHolder\\.pass\\([^)]*\\)", "InteractionResult.PASS", s)
-    s = re.sub(r"InteractionResultHolder\\.consume\\([^)]*\\)", "InteractionResult.CONSUME", s)
+    # Mojang still spells this historical package 'critereon' in the 26.2 mappings.
+    s = s.replace("net.minecraft.advancements.criterion.", "net.minecraft.advancements.critereon.")
+
+    # Block interaction API uses InteractionResult in 26.2.
+    s = s.replace("import net.minecraft.world.ItemInteractionResult;\n", "")
+    s = s.replace("import net.minecraft.world.InteractionResultHolder;\n", "")
+    s = re.sub(r"\bItemInteractionResult\b", "InteractionResult", s)
+    s = re.sub(r"\bInteractionResultHolder<\s*ItemStack\s*>\b", "InteractionResult", s)
+    s = re.sub(r"InteractionResultHolder\.success\([^)]*\)", "InteractionResult.SUCCESS", s)
+    s = re.sub(r"InteractionResultHolder\.pass\([^)]*\)", "InteractionResult.PASS", s)
+    s = re.sub(r"InteractionResultHolder\.consume\([^)]*\)", "InteractionResult.CONSUME", s)
 
     # DirectionProperty was folded into EnumProperty<Direction>.
-    s = s.replace("import net.minecraft.world.level.block.state.properties.DirectionProperty;\\n",
-                  "import net.minecraft.world.level.block.state.properties.EnumProperty;\\n")
-    s = re.sub(r"\\bDirectionProperty\\b", "EnumProperty<Direction>", s)
+    s = s.replace(
+        "import net.minecraft.world.level.block.state.properties.DirectionProperty;\n",
+        "import net.minecraft.world.level.block.state.properties.EnumProperty;\n"
+    )
+    s = re.sub(r"\bDirectionProperty\b", "EnumProperty<Direction>", s)
 
     # Model/render package moves in 26.2.
-    s = s.replace("import net.minecraft.client.renderer.block.model.BakedQuad;",
-                  "import net.minecraft.client.resources.model.geometry.BakedQuad;")
-    s = s.replace("import net.minecraft.client.resources.model.Material;",
-                  "import net.minecraft.client.resources.model.sprite.Material;")
-    s = s.replace("import net.minecraft.client.resources.model.ModelState;",
-                  "import net.minecraft.client.renderer.block.dispatch.ModelState;")
-    s = s.replace("import net.minecraft.world.level.BlockAndTintGetter;",
-                  "import net.minecraft.client.renderer.block.BlockAndTintGetter;")
-    s = s.replace("import net.minecraft.client.renderer.block.model.ItemTransforms;",
-                  "import net.minecraft.client.resources.model.cuboid.ItemTransforms;")
+    s = s.replace(
+        "import net.minecraft.client.renderer.block.model.BakedQuad;",
+        "import net.minecraft.client.resources.model.geometry.BakedQuad;"
+    )
+    s = s.replace(
+        "import net.minecraft.client.resources.model.Material;",
+        "import net.minecraft.client.resources.model.sprite.Material;"
+    )
+    s = s.replace(
+        "import net.minecraft.client.resources.model.ModelState;",
+        "import net.minecraft.client.renderer.block.dispatch.ModelState;"
+    )
+    s = s.replace(
+        "import net.minecraft.world.level.BlockAndTintGetter;",
+        "import net.minecraft.client.renderer.block.BlockAndTintGetter;"
+    )
+    s = s.replace(
+        "import net.minecraft.client.renderer.block.model.ItemTransforms;",
+        "import net.minecraft.client.resources.model.cuboid.ItemTransforms;"
+    )
 
-    # 26.2 keeps the same semantic constants on InteractionResult.
     if "InteractionResult " in s and "import net.minecraft.world.InteractionResult;" not in s:
-        pkg_end = s.find("\\n", s.find("package "))
-        s = s[:pkg_end+1] + "import net.minecraft.world.InteractionResult;\\n" + s[pkg_end+1:]
+        pkg_end = s.find("\n", s.find("package "))
+        s = s[:pkg_end + 1] + "import net.minecraft.world.InteractionResult;\n" + s[pkg_end + 1:]
 
     java.write_text(s, encoding="utf-8")
 
 
-
-# The old NeoForge dynamic model-data API used by WebDisplays 1.20/1.21 was
-# removed in 26.2. Keep the original 16 screen textures, but move adjacency
-# selection to the screen renderer. During the port build the block model is a
-# seam-free neutral screen surface instead of resurrecting dead ModelData APIs.
+# The old NeoForge dynamic ModelData path used by WebDisplays was removed in
+# 26.2. Keep the original screen textures, but move adjacency/frame selection
+# into the stateful panel renderer rather than reviving obsolete APIs.
 for obsolete in [
     "src/main/java/net/montoyo/wd/client/renderers/ScreenBaker.java",
     "src/main/java/net/montoyo/wd/client/renderers/ScreenThinBaker.java",
@@ -187,19 +198,25 @@ for obsolete in [
 client_proxy = DST / "src/main/java/net/montoyo/wd/client/ClientProxy.java"
 if client_proxy.exists():
     s = client_proxy.read_text(encoding="utf-8")
-    s = re.sub(
-        r"\\s*public static void onModelRegistryEvent\\(ModelEvent\\.RegisterGeometryLoaders event\\) \\{.*?\\n\\s*\\}",
-        "",
-        s,
-        flags=re.S
-    )
-    s = s.replace("import net.neoforged.neoforge.client.event.ModelEvent;\\n", "")
-    s = s.replace("import net.montoyo.wd.client.renderers.ScreenModelLoader;\\n", "")
-    s = s.replace("import net.montoyo.wd.client.renderers.ScreenThinModelLoader;\\n", "")
+    old = """\tpublic static void onModelRegistryEvent(ModelEvent.RegisterGeometryLoaders event) {
+\t\tevent.register(ScreenModelLoader.SCREEN_LOADER, new ScreenModelLoader());
+\t\tevent.register(ScreenThinModelLoader.LOADER_ID, new ScreenThinModelLoader());
+\t}
+"""
+    s = s.replace(old, "")
+    s = s.replace("import net.neoforged.neoforge.client.event.ModelEvent;\n", "")
+    s = s.replace("import net.montoyo.wd.client.renderers.ScreenModelLoader;\n", "")
+    s = s.replace("import net.montoyo.wd.client.renderers.ScreenThinModelLoader;\n", "")
     client_proxy.write_text(s, encoding="utf-8")
 
-# A plain center texture removes per-block interior bezels. The panel renderer
-# later adds the original outer frame once per active multiblock.
+webdisplays_java = DST / "src/main/java/net/montoyo/wd/WebDisplays.java"
+if webdisplays_java.exists():
+    s = webdisplays_java.read_text(encoding="utf-8")
+    s = s.replace("            bus.addListener(ClientProxy::onModelRegistryEvent);\n", "")
+    webdisplays_java.write_text(s, encoding="utf-8")
+
+# Seam-free neutral body. The outer panel frame is rendered once from the
+# ScreenData multiblock dimensions, so no per-block interior bezel remains.
 model_dir = DST / "src/main/resources/assets/webdisplays/models/block"
 (model_dir / "screen.json").write_text("""{
   "parent": "minecraft:block/cube_all",
@@ -212,13 +229,6 @@ model_dir = DST / "src/main/resources/assets/webdisplays/models/block"
 }
 """, encoding="utf-8")
 
-
-
-webdisplays_java = DST / "src/main/java/net/montoyo/wd/WebDisplays.java"
-if webdisplays_java.exists():
-    s = webdisplays_java.read_text(encoding="utf-8")
-    s = s.replace("            bus.addListener(ClientProxy::onModelRegistryEvent);\\n", "")
-    webdisplays_java.write_text(s, encoding="utf-8")
 
 # Current resource metadata.
 (DST / "src/main/resources/pack.mcmeta").write_text("""{
