@@ -328,3 +328,474 @@ mixin_json.write_text("""{
 gui_mixin = DST / "src/main/java/me/srrapero720/waterframes/mixin/impl/creativecore/GuiRenderHelperMixin.java"
 if gui_mixin.exists():
     gui_mixin.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Semantic 26.2 migration: loader, persistence, block API, renderer, GUI parents
+# ---------------------------------------------------------------------------
+
+def edit(rel, fn):
+    p = DST / rel
+    s = p.read_text(encoding="utf-8")
+    p.write_text(fn(s), encoding="utf-8")
+
+# NeoForge loader methods became instance methods.
+for rel in [
+    "src/main/java/me/srrapero720/waterframes/WaterFrames.java",
+    "src/main/java/me/srrapero720/waterframes/DisplaysConfig.java",
+]:
+    edit(rel, lambda s: s
+        .replace("FMLLoader.getDist()", "FMLLoader.getCurrent().getDist()")
+        .replace("FMLLoader.getLoadingModList()", "FMLLoader.getCurrent().getLoadingModList()")
+        .replace("FMLLoader.isProduction()", "FMLLoader.getCurrent().isProduction()")
+    )
+
+# ResourceKey and profile API changes.
+edit("src/main/java/me/srrapero720/waterframes/common/block/DisplayBlock.java", lambda s: s
+    .replace(".dimension().location()", ".dimension().identifier()")
+    .replace("ChatFormatting.AQUA.getColor()", "0x55FFFF")
+    .replace(
+        "public int getAnalogOutputSignal(BlockState state, Level level, BlockPos pos) {",
+        "public int getAnalogOutputSignal(BlockState state, Level level, BlockPos pos, Direction side) {"
+    )
+)
+
+def config_262(s):
+    s = s.replace("Level level = player.level;", "Level level = player.level();")
+    s = s.replace("player.getGameProfile().getName()", "player.getGameProfile().name()")
+    s = s.replace("integrated.isSingleplayerOwner(player.getGameProfile())", "integrated.isSingleplayerOwner(player.nameAndId())")
+    return s
+edit("src/main/java/me/srrapero720/waterframes/DisplaysConfig.java", config_262)
+
+# DeferredRegister block item helpers now take a property supplier.
+def registry_262(s):
+    s = re.sub(
+        r'registerSimpleBlockItem\("([^"]+)",\s*([A-Z_]+),\s*prop\(\)\)',
+        r'registerSimpleBlockItem("\1", \2, () -> prop())',
+        s
+    )
+    s = s.replace(
+        "BlockEntityRenderers.register(TILE_FRAME.get(), DisplayRenderer::new);",
+        "e.registerBlockEntityRenderer(TILE_FRAME.get(), DisplayRenderer::new);"
+    ).replace(
+        "BlockEntityRenderers.register(TILE_PROJECTOR.get(), DisplayRenderer::new);",
+        "e.registerBlockEntityRenderer(TILE_PROJECTOR.get(), DisplayRenderer::new);"
+    ).replace(
+        "BlockEntityRenderers.register(TILE_TV.get(), DisplayRenderer::new);",
+        "e.registerBlockEntityRenderer(TILE_TV.get(), DisplayRenderer::new);"
+    ).replace(
+        "BlockEntityRenderers.register(TILE_BIG_TV.get(), DisplayRenderer::new);",
+        "e.registerBlockEntityRenderer(TILE_BIG_TV.get(), DisplayRenderer::new);"
+    ).replace(
+        "BlockEntityRenderers.register(TILE_TV_BOX.get(), DisplayRenderer::new);",
+        "e.registerBlockEntityRenderer(TILE_TV_BOX.get(), DisplayRenderer::new);"
+    )
+    return s
+edit("src/main/java/me/srrapero720/waterframes/DisplaysRegistry.java", registry_262)
+
+# 26.2 persistence is ValueInput/ValueOutput. Keep CompoundTag for GUI/network payloads.
+def data_262(s):
+    if "net.minecraft.world.level.storage.ValueInput" not in s:
+        s = s.replace(
+            "import net.minecraft.nbt.CompoundTag;",
+            "import net.minecraft.nbt.CompoundTag;\nimport net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;"
+        )
+    s = s.replace("public void save(CompoundTag nbt, DisplayTile tile)", "public void save(ValueOutput nbt, DisplayTile tile)")
+    s = s.replace("public void load(CompoundTag nbt, DisplayTile tile)", "public void load(ValueInput nbt, DisplayTile tile)")
+    s = s.replace("this.tick = nbt.getIntOr(TICK, 0);", "this.tick = nbt.getLongOr(TICK, 0L);")
+    s = s.replace("this.tickMax = nbt.getIntOr(TICK_MAX, this.tickMax);", "this.tickMax = nbt.getLongOr(TICK_MAX, this.tickMax);")
+    s = s.replace("screen.flip_x.value", "screen.flip_x.getValue()")
+    s = s.replace("screen.flip_y.value", "screen.flip_y.getValue()")
+    s = s.replace("screen.show_model.value", "screen.show_model.getValue()")
+    s = s.replace("screen.lit.value", "screen.lit.getValue()")
+    s = s.replace("screen.mirror.value", "screen.mirror.getState()")
+    return s
+edit("src/main/java/me/srrapero720/waterframes/common/block/data/DisplayData.java", data_262)
+
+def tile_262(s):
+    s = s.replace(
+        "import net.minecraft.nbt.CompoundTag;",
+        "import net.minecraft.nbt.CompoundTag;\nimport net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;"
+    )
+    s = re.sub(
+        r'@Override\s+protected void saveAdditional\(CompoundTag nbt, HolderLookup\.Provider registries\) \{\s*this\.data\.save\(nbt, this\);\s*super\.saveAdditional\(nbt, registries\);\s*\}',
+        '''@Override
+    protected void saveAdditional(ValueOutput output) {
+        this.data.save(output, this);
+        super.saveAdditional(output);
+    }''',
+        s, flags=re.S
+    )
+    s = re.sub(
+        r'@Override\s+protected void loadAdditional\(CompoundTag nbt, HolderLookup\.Provider registries\) \{\s*this\.data\.load\(nbt, this\);\s*super\.loadAdditional\(nbt, registries\);\s*\}',
+        '''@Override
+    protected void loadAdditional(ValueInput input) {
+        this.data.load(input, this);
+        super.loadAdditional(input);
+    }''',
+        s, flags=re.S
+    )
+    s = re.sub(
+        r'@Override\s+public void handleUpdateTag\(CompoundTag tag, HolderLookup\.Provider lookupProvider\) \{\s*super\.handleUpdateTag\(tag, lookupProvider\);\s*this\.data\.load\(tag, this\);\s*this\.setDirty\(\);\s*\}',
+        '''@Override
+    public void handleUpdateTag(ValueInput input) {
+        super.handleUpdateTag(input);
+        this.data.load(input, this);
+        this.setDirty();
+    }''',
+        s, flags=re.S
+    )
+    return s
+edit("src/main/java/me/srrapero720/waterframes/common/block/entity/DisplayTile.java", tile_262)
+
+# Full 26.2 block-entity renderer port. State extraction owns all world/tile reads;
+# submission only consumes immutable-ish frame data.
+renderer = DST / "src/main/java/me/srrapero720/waterframes/client/rendering/DisplayRenderer.java"
+renderer.write_text("""package me.srrapero720.waterframes.client.rendering;
+
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
+import me.srrapero720.waterframes.DisplaysConfig;
+import me.srrapero720.waterframes.WaterFrames;
+import me.srrapero720.waterframes.common.block.entity.DisplayTile;
+import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
+import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
+import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
+import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Vec3i;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.phys.Vec3;
+import org.jspecify.annotations.Nullable;
+import team.creative.creativecore.common.util.math.base.Axis;
+import team.creative.creativecore.common.util.math.base.Facing;
+import team.creative.creativecore.common.util.math.box.AlignedBox;
+import team.creative.creativecore.common.util.math.box.BoxCorner;
+import team.creative.creativecore.common.util.math.box.BoxFace;
+
+public final class DisplayRenderer implements BlockEntityRenderer<DisplayTile, DisplayRenderer.State> {
+
+    public DisplayRenderer(BlockEntityRendererProvider.Context context) {}
+
+    public static final class State extends BlockEntityRenderState {
+        boolean valid;
+        AlignedBox box;
+        Facing facing;
+        BoxFace boxFace;
+        boolean front;
+        boolean back;
+        boolean flipX;
+        boolean flipY;
+        boolean projects;
+        int color;
+        float rotation;
+        boolean loading;
+        boolean buffering;
+        Identifier texture;
+    }
+
+    @Override
+    public State createRenderState() {
+        return new State();
+    }
+
+    @Override
+    public void extractRenderState(
+            DisplayTile tile,
+            State state,
+            float partialTicks,
+            Vec3 cameraPosition,
+            ModelFeatureRenderer.@Nullable CrumblingOverlay breakProgress) {
+        BlockEntityRenderer.super.extractRenderState(tile, state, partialTicks, cameraPosition, breakProgress);
+        state.valid = false;
+        state.texture = null;
+        state.loading = false;
+        state.buffering = false;
+
+        if (!DisplaysConfig.keepsRendering()) return;
+        var display = tile.activeDisplay();
+        if (display == null) return;
+
+        display.preRender();
+
+        var direction = tile.getDirection();
+        var box = new AlignedBox(tile.getRenderBox());
+        boolean invertedFace = tile.caps.invertedFace(tile);
+        var boxFace = BoxFace.get(Facing.get(invertedFace ? direction.getOpposite() : direction));
+        var facing = boxFace.facing;
+
+        if (tile.caps.growMax(tile, facing, invertedFace)) {
+            box.setMax(facing.axis, box.getMax(facing.axis) + tile.caps.growSize());
+        } else {
+            box.setMin(facing.axis, box.getMin(facing.axis) - tile.caps.growSize());
+        }
+
+        state.box = box;
+        state.boxFace = boxFace;
+        state.facing = facing;
+        state.projects = tile.caps.projects();
+        state.front = !state.projects || tile.data.renderBothSides;
+        state.back = state.projects || tile.data.renderBothSides;
+        state.flipX = state.projects != tile.data.flipX;
+        state.flipY = tile.data.flipY;
+        state.rotation = tile.data.rotation;
+        int c = tile.data.brightness & 0xFF;
+        int a = tile.data.alpha & 0xFF;
+        state.color = (a << 24) | (c << 16) | (c << 8) | c;
+        state.loading = display.isLoading();
+        state.buffering = display.isBuffering();
+        if (display.canRender()) state.texture = display.getTextureId();
+        state.valid = state.loading || state.buffering || state.texture != null;
+    }
+
+    @Override
+    public void submit(State state, PoseStack poseStack, SubmitNodeCollector collector, CameraRenderState camera) {
+        if (!state.valid || state.box == null || state.boxFace == null || state.facing == null) return;
+
+        poseStack.pushPose();
+        poseStack.translate(0.5, 0.5, 0.5);
+        poseStack.mulPose(state.facing.rotation().rotation((float) Math.toRadians(-state.rotation)));
+        poseStack.translate(-0.5, -0.5, -0.5);
+
+        if (state.loading) {
+            submitFace(state, loadingBox(state.box, state.facing, state.projects),
+                    WaterFrames.LOADING_ANIMATION, poseStack, collector);
+        } else if (state.texture != null) {
+            submitFace(state, state.box, state.texture, poseStack, collector);
+            if (state.buffering) {
+                submitFace(state, loadingBox(state.box, state.facing, state.projects),
+                        WaterFrames.LOADING_ANIMATION, poseStack, collector);
+            }
+        }
+        poseStack.popPose();
+    }
+
+    private static void submitFace(State state, AlignedBox box, Identifier texture,
+                                   PoseStack poseStack, SubmitNodeCollector collector) {
+        collector.submitCustomGeometry(
+                poseStack,
+                RenderTypes.entityTranslucent(texture),
+                (pose, builder) -> emitFace(state, box, pose, builder)
+        );
+    }
+
+    private static void emitFace(State state, AlignedBox box, PoseStack.Pose pose, VertexConsumer builder) {
+        if (state.front) {
+            for (int i = 0; i < state.boxFace.corners.length; i++) {
+                emitVertex(state, box, state.boxFace.corners[i], pose, builder);
+            }
+        }
+        if (state.back) {
+            for (int i = state.boxFace.corners.length - 1; i >= 0; i--) {
+                emitVertex(state, box, state.boxFace.corners[i], pose, builder);
+            }
+        }
+    }
+
+    private static void emitVertex(State state, AlignedBox box, BoxCorner corner,
+                                   PoseStack.Pose pose, VertexConsumer builder) {
+        Vec3i normal = state.facing.normal;
+        int color = state.color;
+        int r = (color >>> 16) & 0xFF;
+        int g = (color >>> 8) & 0xFF;
+        int b = color & 0xFF;
+        int a = (color >>> 24) & 0xFF;
+        builder.addVertex(pose, box.get(corner.x), box.get(corner.y), box.get(corner.z))
+                .setColor(r, g, b, a)
+                .setUv(corner.isFacing(state.boxFace.getTexU()) != state.flipX ? 1f : 0f,
+                       corner.isFacing(state.boxFace.getTexV()) != state.flipY ? 1f : 0f)
+                .setOverlay(OverlayTexture.NO_OVERLAY)
+                .setLight(LightTexture.FULL_BRIGHT)
+                .setNormal(pose, normal.getX(), normal.getY(), normal.getZ());
+    }
+
+    private static AlignedBox loadingBox(AlignedBox parent, Facing facing, boolean projects) {
+        AlignedBox box = new AlignedBox(parent);
+        Axis one = facing.one();
+        Axis two = facing.two();
+        float width = box.getSize(one);
+        float height = box.getSize(two);
+
+        if (width > height) {
+            float subtracts = (width - height) / 2f;
+            float margin = height / 4f;
+            box.setMin(one, box.getMin(one) + subtracts + margin);
+            box.setMax(one, box.getMax(one) - subtracts - margin);
+            box.setMin(two, box.getMin(two) + margin);
+            box.setMax(two, box.getMax(two) - margin);
+        } else if (height > width) {
+            float subtracts = (height - width) / 2f;
+            float margin = width / 4f;
+            box.setMin(two, box.getMin(two) + subtracts + margin);
+            box.setMax(two, box.getMax(two) - subtracts - margin);
+            box.setMin(one, box.getMin(one) + margin);
+            box.setMax(one, box.getMax(one) - margin);
+        }
+
+        if (facing.positive) {
+            box.setMax(facing.axis, parent.getMax(facing.axis) + (projects ? -0.001f : 0.001f));
+        } else {
+            box.setMin(facing.axis, parent.getMin(facing.axis) - (projects ? -0.001f : 0.001f));
+        }
+        return box;
+    }
+
+    @Override
+    public boolean shouldRenderOffScreen() {
+        return true;
+    }
+
+    @Override
+    public int getViewDistance() {
+        return Math.max(128, DisplaysConfig.maxRenDis());
+    }
+
+    @Override
+    public boolean shouldRender(DisplayTile tile, Vec3 cameraPos) {
+        BlockPos tilePos = tile.getBlockPos().relative(tile.getDirection(), (int) tile.data.projectionDistance);
+        return Vec3.atCenterOf(tilePos).closerThan(cameraPos, tile.data.renderDistance);
+    }
+}
+""", encoding="utf-8")
+
+# CreativeCore 26.x controls require an IGuiParent at construction.
+# Screens can safely create direct children against themselves; add() re-parents nested children.
+screen_files = [
+    "src/main/java/me/srrapero720/waterframes/common/screens/DisplayScreen.java",
+    "src/main/java/me/srrapero720/waterframes/common/screens/PlayListScreen.java",
+    "src/main/java/me/srrapero720/waterframes/common/screens/RemoteControlScreen.java",
+]
+constructors = [
+    "GuiLabel", "GuiIcon", "GuiButtonIcon", "GuiCheckBox", "GuiCheckButtonIcon",
+    "GuiStateButtonIcon", "GuiCounterDecimal", "GuiSlider", "GuiSteppedSlider",
+    "GuiSeekBar", "GuiButton", "GuiScrollY"
+]
+for rel in screen_files:
+    p = DST / rel
+    s = p.read_text(encoding="utf-8")
+    # Layer constructor now carries the side explicitly.
+    if "DisplayScreen.java" in rel:
+        s = s.replace('super("display_screen", WIDTH, HEIGHT);', 'super(tile.isClient(), "display_screen", WIDTH, HEIGHT);')
+    elif "PlayListScreen.java" in rel:
+        s = s.replace('super("display_screen", WIDTH, HEIGHT);', 'super(tile.isClient(), "display_screen", WIDTH, HEIGHT);')
+    else:
+        s = s.replace('super("remote_screen", WIDTH, HEIGHT);', 'super(tile.isClient(), "remote_screen", WIDTH, HEIGHT);')
+
+    for klass in constructors:
+        s = re.sub(rf'new {klass}\((?!this,)', f'new {klass}(this, ', s)
+
+    # GuiParent constructor family.
+    s = re.sub(r'new GuiParent\(\)', 'new GuiParent(this)', s)
+    s = re.sub(r'new GuiParent\((GuiFlow\.)', r'new GuiParent(this, \1', s)
+    s = re.sub(r'new GuiParent\("', 'new GuiParent(this, "', s)
+
+    # Current check widgets expose getters/setters instead of public state fields.
+    s = s.replace(".playback.value", ".playback.getState()")
+    s = s.replace(".loop.value", ".loop.getState()")
+    s = s.replace(".mirror.value", ".mirror.getState()")
+    s = s.replace("playButton.value", "playButton.getState()")
+    s = s.replace("show_model.set(", "show_model.setValue(")
+    s = s.replace("lit.set(", "lit.setValue(")
+    s = s.replace("shaderMode.set(", "shaderMode.setValue(")
+
+    p.write_text(s, encoding="utf-8")
+
+# Parent-aware custom controls / tables.
+pair = DST / "src/main/java/me/srrapero720/waterframes/common/screens/widgets/WidgetPairTable.java"
+s = pair.read_text(encoding="utf-8")
+s = s.replace("import team.creative.creativecore.common.gui.GuiControl;", "import team.creative.creativecore.common.gui.GuiControl;\nimport team.creative.creativecore.common.gui.IGuiParent;")
+s = s.replace("public WidgetPairTable(GuiFlow columGuiFlow) {", "public WidgetPairTable(IGuiParent parent, GuiFlow columGuiFlow) {")
+s = s.replace("this(columGuiFlow, 0);", "this(parent, columGuiFlow, 0);")
+s = s.replace("public WidgetPairTable(GuiFlow columGuiFlow, int spacing) {", "public WidgetPairTable(IGuiParent parent, GuiFlow columGuiFlow, int spacing) {")
+s = s.replace("this(columGuiFlow, Align.LEFT, spacing);", "this(parent, columGuiFlow, Align.LEFT, spacing);")
+s = s.replace("public WidgetPairTable(GuiFlow defaultFlow, Align align, int spacing) {", "public WidgetPairTable(IGuiParent parent, GuiFlow defaultFlow, Align align, int spacing) {\n        super(parent);")
+s = s.replace("this.spacing = spacing;", "this.setSpacing(spacing);")
+s = s.replace("this.align = align;", "this.setAlign(align);")
+s = s.replace("this.left.align = Align.LEFT;", "this.left.setAlign(Align.LEFT);")
+s = s.replace("this.right.align = Align.RIGHT;", "this.right.setAlign(Align.RIGHT);")
+s = s.replace("left.flow = flow;", "left.setFlow(flow);")
+s = s.replace("right.flow = flow;", "right.setFlow(flow);")
+s = s.replace("return new GuiRow(left = new GuiColumn(), right = new GuiColumn());",
+              "return new GuiRow(this, left = new GuiColumn(this), right = new GuiColumn(this));")
+s = s.replace("this.left.flow = flow;", "this.left.setFlow(flow);")
+s = s.replace("this.right.flow = flow;", "this.right.setFlow(flow);")
+s = s.replace("this.flow = flow;", "super.setFlow(flow);")
+pair.write_text(s, encoding="utf-8")
+
+triple = DST / "src/main/java/me/srrapero720/waterframes/common/screens/widgets/WidgetTripleTable.java"
+s = triple.read_text(encoding="utf-8")
+s = s.replace("import team.creative.creativecore.common.gui.GuiControl;", "import team.creative.creativecore.common.gui.GuiControl;\nimport team.creative.creativecore.common.gui.IGuiParent;")
+s = s.replace("public WidgetTripleTable(GuiFlow columGuiFlow) {\n        super(columGuiFlow);",
+              "public WidgetTripleTable(IGuiParent parent, GuiFlow columGuiFlow) {\n        super(parent, columGuiFlow);")
+s = s.replace("this.center.align = Align.CENTER;", "this.center.setAlign(Align.CENTER);")
+s = s.replace("return new GuiRow(left = new GuiColumn(), center = new GuiColumn(), right = new GuiColumn());",
+              "return new GuiRow(this, left = new GuiColumn(this), center = new GuiColumn(this), right = new GuiColumn(this));")
+s = s.replace("center.flow = flow;", "center.setFlow(flow);")
+triple.write_text(s, encoding="utf-8")
+
+# Basic custom control constructors.
+custom_specs = {
+    "WidgetURLTextField.java": (
+        "import team.creative.creativecore.common.gui.GuiControl;",
+        "import team.creative.creativecore.common.gui.GuiControl;\nimport team.creative.creativecore.common.gui.IGuiParent;",
+        "public WidgetURLTextField(DisplayTile tile) {",
+        "public WidgetURLTextField(IGuiParent parent, DisplayTile tile) {",
+        "super(DisplayData.URL);",
+        "super(parent, DisplayData.URL);"
+    ),
+    "WidgetStatusIcon.java": (
+        "import team.creative.creativecore.common.gui.control.simple.GuiIcon;",
+        "import team.creative.creativecore.common.gui.IGuiParent;\nimport team.creative.creativecore.common.gui.control.simple.GuiIcon;",
+        "public WidgetStatusIcon(String name, Icon icon, DisplayTile tile) {",
+        "public WidgetStatusIcon(IGuiParent parent, String name, Icon icon, DisplayTile tile) {",
+        "super(name, icon);",
+        "super(parent, name, icon);"
+    ),
+    "WidgetClickableArea.java": (
+        "import team.creative.creativecore.common.gui.control.simple.GuiIcon;",
+        "import team.creative.creativecore.common.gui.IGuiParent;\nimport team.creative.creativecore.common.gui.control.simple.GuiIcon;",
+        "public WidgetClickableArea(String name, PositionHorizontal x, PositionVertical y) {",
+        "public WidgetClickableArea(IGuiParent parent, String name, PositionHorizontal x, PositionVertical y) {",
+        "super(name, IconStyles.POS_BASE);",
+        "super(parent, name, IconStyles.POS_BASE);"
+    ),
+    "WidgetPlaylistEntry.java": (
+        "import team.creative.creativecore.common.gui.GuiParent;",
+        "import team.creative.creativecore.common.gui.GuiParent;\nimport team.creative.creativecore.common.gui.IGuiParent;",
+        "public WidgetPlaylistEntry(DisplayTile tile, LinkedList<URI> list, URI uri) {",
+        "public WidgetPlaylistEntry(IGuiParent parent, DisplayTile tile, LinkedList<URI> list, URI uri) {",
+        'super("experimental_element_" + uri.toString());',
+        'super(parent, "experimental_element_" + uri.toString());'
+    ),
+}
+for file, spec in custom_specs.items():
+    p = DST / "src/main/java/me/srrapero720/waterframes/common/screens/widgets" / file
+    s = p.read_text(encoding="utf-8")
+    s = s.replace(spec[0], spec[1]).replace(spec[2], spec[3]).replace(spec[4], spec[5])
+    # Nested direct children use this custom parent.
+    for klass in ["GuiLabel", "GuiButtonIcon"]:
+        s = re.sub(rf'new {klass}\((?!this,)', f'new {klass}(this, ', s)
+    s = re.sub(r'new GuiParent\(\)', 'new GuiParent(this)', s)
+    s = re.sub(r'new GuiParent\("', 'new GuiParent(this, "', s)
+    p.write_text(s, encoding="utf-8")
+
+# Update custom-widget call sites now that their constructors are parent-aware.
+for rel in screen_files:
+    p = DST / rel
+    s = p.read_text(encoding="utf-8")
+    s = re.sub(r'new WidgetPairTable\((?!this,)', 'new WidgetPairTable(this, ', s)
+    s = re.sub(r'new WidgetTripleTable\((?!this,)', 'new WidgetTripleTable(this, ', s)
+    s = re.sub(r'new WidgetClickableArea\((?!this,)', 'new WidgetClickableArea(this, ', s)
+    s = re.sub(r'new WidgetStatusIcon\((?!this,)', 'new WidgetStatusIcon(this, ', s)
+    s = s.replace("new WidgetURLTextField(this.tile)", "new WidgetURLTextField(this, this.tile)")
+    s = s.replace("new WidgetURLTextField(null)", "new WidgetURLTextField(this, null)")
+    # Entries added to the list should originate under the list parent.
+    s = s.replace("new WidgetPlaylistEntry(tile, this.uris,", "new WidgetPlaylistEntry(this.list, tile, this.uris,")
+    p.write_text(s, encoding="utf-8")
+
+# Remote screen also uses pair/triple custom tables after the generic pass.
