@@ -1865,3 +1865,502 @@ if control.exists():
 
 
 print("Core semantic fixes complete")
+
+
+# ===========================================================================
+# GUI / REGISTRY 26.2 PORT
+# ===========================================================================
+
+controls = DST / "src/main/java/net/montoyo/wd/client/gui/controls"
+
+# Base control: preserve WebDisplays' immediate-mode helper API at the call-site,
+# but implement it with the 26.2 GUI extractor.
+(controls / "Control.java").write_text("""package net.montoyo.wd.client.gui.controls;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.resources.language.I18n;
+import net.minecraft.resources.Identifier;
+import net.montoyo.wd.client.gui.WDScreen;
+import net.montoyo.wd.client.gui.loading.JsonOWrapper;
+import net.montoyo.wd.utilities.data.Bounds;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+
+@OnlyIn(Dist.CLIENT)
+public abstract class Control {
+    public static final int COLOR_BLACK    = 0xFF000000;
+    public static final int COLOR_WHITE    = 0xFFFFFFFF;
+    public static final int COLOR_RED      = 0xFFFF0000;
+    public static final int COLOR_GREEN    = 0xFF00FF00;
+    public static final int COLOR_BLUE     = 0xFF0000FF;
+    public static final int COLOR_CYAN     = 0xFF00FFFF;
+    public static final int COLOR_MANGENTA = 0xFFFF00FF;
+    public static final int COLOR_YELLOW   = 0xFFFFFF00;
+
+    protected final Minecraft mc;
+    protected final Font font;
+    protected static WDScreen parent;
+    protected String name;
+    protected Object userdata;
+    private Identifier boundTexture;
+
+    public Control() {
+        mc = Minecraft.getInstance();
+        font = mc.font;
+        parent = WDScreen.CURRENT_SCREEN;
+    }
+
+    public Object getUserdata() { return userdata; }
+    public void setUserdata(Object userdata) { this.userdata = userdata; }
+    public boolean keyTyped(int keyCode, int modifier) { return false; }
+    public boolean keyUp(int key, int scanCode, int modifiers) { return false; }
+    public boolean keyDown(int key, int scanCode, int modifiers) { return false; }
+    public boolean mouseClicked(double mouseX, double mouseY, int mouseButton) { return false; }
+    public void unfocus() {}
+    public boolean mouseReleased(double mouseX, double mouseY, int state) { return false; }
+    public boolean mouseClickMove(double mouseX, double mouseY, int button, double dragX, double dragY) { return false; }
+    public boolean mouseMove(double mouseX, double mouseY) { return false; }
+    public boolean mouseScroll(double mouseX, double mouseY, double amount) { return false; }
+    public void draw(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {}
+    public void postDraw(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {}
+    public void destroy() {}
+    public WDScreen getParent() { return parent; }
+
+    public abstract int getX();
+    public abstract int getY();
+    public abstract int getWidth();
+    public abstract int getHeight();
+    public abstract void setPos(int x, int y);
+
+    public void fillRect(GuiGraphicsExtractor graphics, int x, double y, int w, int h, int color) {
+        graphics.fill(x, (int)y, x + w, (int)y + h, color);
+    }
+
+    public void fillTexturedRect(GuiGraphicsExtractor graphics, int x, int y, int w, int h,
+                                 double u1, double v1, double u2, double v2) {
+        if (boundTexture != null) {
+            graphics.blit(boundTexture, x, y, x + w, y + h,
+                    (float)u1, (float)u2, (float)v1, (float)v2);
+        }
+    }
+
+    public static void blend(boolean enable) {
+        // GUI render pipelines own blend state in 26.2.
+    }
+
+    public void bindTexture(Identifier texture) {
+        this.boundTexture = texture;
+    }
+
+    public void drawBorder(GuiGraphicsExtractor graphics, int x, int y, int w, int h, int color) {
+        drawBorder(graphics, x, y, w, h, color, 1.0);
+    }
+
+    public void drawBorder(GuiGraphicsExtractor graphics, int x, int y, int w, int h, int color, double size) {
+        int s = Math.max(1, (int)Math.ceil(size));
+        graphics.fill(x, y, x + w, y + s, color);
+        graphics.fill(x, y + h - s, x + w, y + h, color);
+        graphics.fill(x, y, x + s, y + h, color);
+        graphics.fill(x + w - s, y, x + w, y + h, color);
+    }
+
+    public static String tr(String text) {
+        if(text.length() >= 2 && text.charAt(0) == '$') {
+            return text.charAt(1) == '$' ? text.substring(1) : I18n.get(text.substring(1));
+        }
+        return text;
+    }
+
+    public void setName(String name) { this.name = name; }
+    public String getName() { return name; }
+    public void load(JsonOWrapper json) { name = json.getString("name", ""); }
+
+    public static Bounds findBounds(java.util.List<Control> controlList) {
+        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
+        for(Control ctrl : controlList) {
+            int x = ctrl.getX(), y = ctrl.getY();
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x + ctrl.getWidth());
+            maxY = Math.max(maxY, y + ctrl.getHeight());
+        }
+        return new Bounds(minX, minY, maxX, maxY);
+    }
+}
+""", encoding="utf-8")
+
+
+# Direct extractor-based list; scissor replaces the legacy FBO.
+(controls / "List.java").write_text("""package net.montoyo.wd.client.gui.controls;
+
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.montoyo.wd.client.gui.loading.JsonOWrapper;
+import java.util.ArrayList;
+
+public class List extends BasicControl {
+    private static class Entry {
+        final String text;
+        final Object userdata;
+        Entry(String text, Object userdata) { this.text = text; this.userdata = userdata; }
+    }
+
+    public static class EntryClick extends Event<List> {
+        private final int id;
+        private final Entry entry;
+        public EntryClick(List list) {
+            source = list;
+            id = list.selected;
+            entry = list.content.get(list.selected);
+        }
+        public int getId() { return id; }
+        public String getLabel() { return entry.text; }
+        public Object getUserdata() { return entry.userdata; }
+    }
+
+    private int width, height;
+    private final ArrayList<Entry> content = new ArrayList<>();
+    private int selected = -1;
+    private int selColor = 0xFF0080FF;
+    private int contentH;
+    private int scrollSize;
+    private double scrollPos;
+    private boolean scrolling;
+    private double scrollGrab;
+
+    public List() { content.add(new Entry("", null)); selected = 0; }
+    public List(int x, int y, int w, int h) {
+        this.x=x; this.y=y; width=w; height=h; scrollSize=Math.max(1,h-2);
+    }
+
+    private int getYOffset() {
+        int travel = height - 2 - scrollSize;
+        int overflow = contentH - height;
+        if (travel <= 0 || overflow <= 0) return 0;
+        return (int)(scrollPos / travel * overflow);
+    }
+
+    private boolean isInScrollbar(double mx,double my) {
+        return mx>=x+width-5 && mx<=x+width-1 && my>=y+1+scrollPos && my<=y+1+scrollPos+scrollSize;
+    }
+
+    @Override public void destroy() {}
+    public void setSize(int w,int h){width=w;height=h;updateContent();}
+    public void setWidth(int w){width=w;updateContent();}
+    public void setHeight(int h){height=h;updateContent();}
+    @Override public int getWidth(){return width;}
+    @Override public int getHeight(){return height;}
+
+    public void updateContent() {
+        contentH = content.size()*12+4;
+        int h2=Math.max(1,height-2);
+        if(contentH<=h2){scrollSize=h2;scrollPos=0;}
+        else scrollSize=Math.max(4,h2*h2/contentH);
+    }
+
+    public int addElement(String s){return addElement(s,null);}
+    public int addElement(String s,Object u){content.add(new Entry(s,u));updateContent();return content.size()-1;}
+    public int addElementRaw(String s){return addElementRaw(s,null);}
+    public int addElementRaw(String s,Object u){content.add(new Entry(s,u));return content.size()-1;}
+
+    @Override public void setDisabled(boolean d){disabled=d;if(d)selected=-1;}
+    @Override public void disable(){disabled=true;selected=-1;}
+
+    @Override public boolean mouseMove(double mx,double my){
+        int sel=-1;
+        if(!disabled && mx>=x+1 && mx<=x+width-6 && my>=y+2 && my<=y+height-2){
+            sel=(int)((my-(y+4-getYOffset()))/12);
+            if(sel<0||sel>=content.size())sel=-1;
+        }
+        if(selected!=sel){selected=sel;return true;}
+        return false;
+    }
+
+    @Override public boolean mouseClicked(double mx,double my,int b){
+        if(disabled||b!=0)return false;
+        if(isInScrollbar(mx,my)){scrolling=true;scrollGrab=my-(y+1+scrollPos);return true;}
+        if(selected>=0){parent.actionPerformed(new EntryClick(this));return true;}
+        return false;
+    }
+    @Override public boolean mouseReleased(double mx,double my,int b){if(!disabled&&scrolling){scrolling=false;return true;}return false;}
+    @Override public boolean mouseScroll(double mx,double my,double amount){
+        if(disabled||scrolling||mx<x||mx>x+width||my<y||my>y+height)return false;
+        int travel=height-2-scrollSize;
+        int overflow=contentH-height;
+        if(travel<=0||overflow<=0)return false;
+        double disp=12.0*travel/overflow;
+        scrollPos=Math.max(0,Math.min(travel,scrollPos+(amount<0?disp:-disp)));
+        return true;
+    }
+    @Override public boolean mouseClickMove(double mx,double my,int button,double dx,double dy){
+        if(disabled||!scrolling)return false;
+        int travel=height-2-scrollSize;
+        scrollPos=Math.max(0,Math.min(travel,my-scrollGrab-y-1));
+        return true;
+    }
+
+    @Override public void draw(GuiGraphicsExtractor g,int mouseX,int mouseY,float partialTick){
+        if(!visible)return;
+        g.fill(x,y,x+width,y+height,COLOR_BLACK);
+        g.enableScissor(x+1,y+1,x+width-6,y+height-1);
+        int offset=y+4-getYOffset();
+        for(int i=0;i<content.size();i++){
+            int py=i*12+offset;
+            if(py+12<y+1)continue;
+            if(py>=y+height-1)break;
+            int color=(i==selected)?selColor:COLOR_WHITE;
+            g.text(font,content.get(i).text,x+4,py,color);
+        }
+        g.disableScissor();
+        drawBorder(g,x,y,width,height,0xFF808080);
+        g.fill(x+width-5,(int)(y+1+scrollPos),x+width-1,(int)(y+1+scrollPos+scrollSize),
+                (scrolling||isInScrollbar(mouseX,mouseY))?0xFF202020:0xFF404040);
+    }
+
+    public String getEntryLabel(int id){return content.get(id).text;}
+    public Object getEntryUserdata(int id){return content.get(id).userdata;}
+    public int findEntryByLabel(String l){for(int i=0;i<content.size();i++)if(content.get(i).text.equals(l))return i;return -1;}
+    public int findEntryByUserdata(Object o){for(int i=0;i<content.size();i++)if(java.util.Objects.equals(content.get(i).userdata,o))return i;return -1;}
+    public void setSelectionColor(int c){selColor=c;}
+    public int getSelectionColor(){return selColor;}
+    public int getElementCount(){return content.size();}
+    public void removeElement(int id){if(selected!=-1&&id==content.size()-1)selected=-1;content.remove(id);updateContent();}
+    public void removeElementRaw(int id){if(selected!=-1&&id==content.size()-1)selected=-1;content.remove(id);}
+    public void clear(){content.clear();scrollPos=0;scrolling=false;scrollSize=Math.max(1,height-2);selected=-1;}
+    public void clearRaw(){content.clear();scrollPos=0;scrolling=false;selected=-1;}
+    @Override public void load(JsonOWrapper json){super.load(json);width=json.getInt("width",100);height=json.getInt("height",100);selColor=json.getColor("selectionColor",0xFF0080FF);updateContent();}
+}
+""", encoding="utf-8")
+
+
+(controls / "UpgradeGroup.java").write_text("""package net.montoyo.wd.client.gui.controls;
+
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.world.item.ItemStack;
+import net.montoyo.wd.client.gui.loading.JsonOWrapper;
+import java.util.ArrayList;
+
+public class UpgradeGroup extends BasicControl {
+    private int width;
+    private int height;
+    private ArrayList<ItemStack> upgrades;
+    private ItemStack overStack;
+    private ItemStack clickStack;
+
+    public UpgradeGroup(){parent.requirePostDraw(this);}
+
+    @Override public void draw(GuiGraphicsExtractor g,int mouseX,int mouseY,float partialTick){
+        if(upgrades==null)return;
+        int px=this.x;
+        for(ItemStack stack:upgrades){
+            if(stack==overStack&&!disabled) g.fill(px,y,px+16,y+16,0x80FF0000);
+            g.item(stack,px,y);
+            g.itemDecorations(font,stack,px,y);
+            px+=18;
+        }
+    }
+    @Override public void postDraw(GuiGraphicsExtractor g,int mouseX,int mouseY,float partialTick){
+        if(overStack!=null) parent.drawItemStackTooltip(g,overStack,mouseX,mouseY);
+    }
+    @Override public int getWidth(){return width;}
+    @Override public int getHeight(){return height;}
+    public void setWidth(int w){width=w;}
+    public void setHeight(int h){height=h;}
+    public void setUpgrades(ArrayList<ItemStack> u){upgrades=u;}
+    public ArrayList<ItemStack> getUpgrades(){return upgrades;}
+    @Override public void load(JsonOWrapper json){super.load(json);width=json.getInt("width",0);height=json.getInt("height",16);}
+    @Override public boolean mouseMove(double mx,double my){
+        if(upgrades==null)return false;
+        overStack=null;
+        if(my>=y&&my<=y+16&&mx>=x){
+            double rel=mx-x;int sel=(int)(rel/18);
+            if(sel<upgrades.size()&&rel%18<=16)overStack=upgrades.get(sel);
+            return true;
+        }
+        return false;
+    }
+    @Override public boolean mouseClicked(double mx,double my,int b){
+        if(b==0&&mx>=x&&mx<=x+width&&my>=y&&my<=y+height){clickStack=overStack;return true;}
+        return false;
+    }
+    @Override public boolean mouseReleased(double mx,double my,int b){
+        if(b==0&&clickStack!=null){
+            if(clickStack==overStack&&!disabled&&upgrades.contains(clickStack))parent.actionPerformed(new ClickEvent(this));
+            clickStack=null;return true;
+        }
+        return false;
+    }
+    public ItemStack getMouseOverUpgrade(){return overStack;}
+    public static class ClickEvent extends Event<UpgradeGroup>{
+        private final ItemStack clickStack;
+        public ClickEvent(UpgradeGroup src){source=src;clickStack=src.clickStack;}
+        public ItemStack getMouseOverStack(){return clickStack;}
+    }
+}
+""", encoding="utf-8")
+
+
+# Recipe viewer, migrated to extractor item rendering. It remains functionally
+# equivalent without old raw Lighting/ItemRenderer state.
+recipe = DST / "src/main/java/net/montoyo/wd/client/gui/RenderRecipe.java"
+if recipe.exists():
+    text = recipe.read_text(encoding="utf-8")
+    text = text.replace("import com.mojang.blaze3d.platform.Lighting;\n","")
+    text = text.replace("import com.mojang.blaze3d.systems.RenderSystem;\n","")
+    text = text.replace("import com.mojang.blaze3d.vertex.PoseStack;\n","")
+    text = text.replace("import net.minecraft.client.renderer.entity.ItemRenderer;\n","")
+    text = text.replace("private ItemRenderer renderItem;\n","")
+    text = text.replace("renderItem = minecraft.getItemRenderer();\n","")
+    text = text.replace("Lighting.setupForFlatItems();","")
+    text = text.replace("Lighting.setupFor3DItems();","")
+    text = text.replace("RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);","")
+    text = text.replace("RenderSystem.setShaderTexture(0, CRAFTING_TABLE_GUI_TEXTURES);","")
+    text = text.replace("renderBackground(context, mouseX, mouseY, partialTick);","extractBackground(context, mouseX, mouseY, partialTick);")
+    text = text.replace("minecraft.setScreen(null)","minecraft.gui.setScreen(null)")
+    recipe.write_text(text,encoding="utf-8")
+
+
+# Make the shared MCEF native texture bridge reusable by MinePad GUI.
+bridge = render_dir / "BrowserTextureBridge.java"
+if bridge.exists():
+    text = bridge.read_text(encoding="utf-8")
+    text = text.replace("final class BrowserTextureBridge", "public final class BrowserTextureBridge")
+    text = text.replace("static Identifier texture(", "public static Identifier texture(")
+    bridge.write_text(text, encoding="utf-8")
+
+
+# MinePad GUI: browser remains MCEF, but its frame is submitted through the
+# normal 26.2 GUI texture path instead of raw GL/Tesselator calls.
+minepad_gui = DST / "src/main/java/net/montoyo/wd/client/gui/GuiMinePad.java"
+if minepad_gui.exists():
+    text = minepad_gui.read_text(encoding="utf-8")
+    for imp in [
+        "import com.mojang.blaze3d.systems.RenderSystem;\n",
+        "import com.mojang.blaze3d.vertex.BufferBuilder;\n",
+        "import com.mojang.blaze3d.vertex.BufferUploader;\n",
+        "import com.mojang.blaze3d.vertex.DefaultVertexFormat;\n",
+        "import com.mojang.blaze3d.vertex.Tesselator;\n",
+        "import com.mojang.blaze3d.vertex.VertexFormat;\n",
+        "import net.minecraft.client.renderer.GameRenderer;\n"
+    ]:
+        text=text.replace(imp,"")
+    if "import net.montoyo.wd.client.renderers.BrowserTextureBridge;" not in text:
+        text=text.replace("import net.montoyo.wd.client.ClientProxy;","import net.montoyo.wd.client.ClientProxy;\nimport net.montoyo.wd.client.renderers.BrowserTextureBridge;\nimport net.minecraft.resources.Identifier;")
+    text = remove_java_method(text, "private static void addRect(")
+    render_sig = "public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float ptt)"
+    old_sig = "public void render(GuiGraphics graphics, int mouseX, int mouseY, float ptt)"
+    if old_sig in text:
+        text=text.replace(old_sig,render_sig)
+    # Replace full render method with a clean extractor implementation.
+    text = replace_method_by_signature(
+        text, "public void extractRenderState(",
+        """    @Override
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        int savedWidth = width;
+        int savedHeight = height;
+        width = trueWidth;
+        height = trueHeight;
+        extractBackground(graphics, mouseX, mouseY, partialTick);
+        width = savedWidth;
+        height = savedHeight;
+
+        int x0=(int)vx, y0=(int)vy, x1=(int)(vx+vw), y1=(int)(vy+vh);
+        graphics.fill(x0, y0-16, x1, y0, 0xFFBABABA);
+        graphics.fill(x0, y1, x1, y1+16, 0xFFBABABA);
+        graphics.fill(x0-16, y0, x0, y1, 0xFFBABABA);
+        graphics.fill(x1, y0, x1+16, y1, 0xFFBABABA);
+
+        if (pad != null && pad.view instanceof MCEFBrowser browser && browser.getRenderer() != null) {
+            Identifier texture = BrowserTextureBridge.texture(
+                    browser, Math.max(1,(int)vw), Math.max(1,(int)vh));
+            if (texture != null) graphics.blit(texture, x0, y0, x1, y1, 0f, 1f, 0f, 1f);
+        }
+
+        graphics.text(minecraft.font,
+                Language.getInstance().getOrDefault("webdisplays.gui.minepad.close"),
+                x0+4, y0-minecraft.font.lineHeight-3, 0xFFFFFFFF, true);
+    }"""
+    )
+    text=text.replace("minecraft.getWindow().getWindow()","minecraft.getWindow().handle()")
+    text=text.replace("Minecraft.getInstance().getWindow().getWindow()","Minecraft.getInstance().getWindow().handle()")
+    text=text.replace("minecraft.setScreen(null)","minecraft.gui.setScreen(null)")
+    text=text.replace("this.minecraft.popGuiLayer();","this.minecraft.gui.setScreen(null);")
+    # Legacy modifier helpers moved to Minecraft instance.
+    text=text.replace("hasControlDown()","minecraft.hasControlDown()")
+    text=text.replace("hasAltDown()","false")
+    text=text.replace("hasShiftDown()","minecraft.hasShiftDown()")
+    minepad_gui.write_text(text,encoding="utf-8")
+
+
+# BrotherBill's shader-era MinePad overlay depends on removed global matrix state.
+# On 26.2 the MinePad GUI itself uses BrowserTextureBridge and normal GUI
+# submission; keep this class as the queue API used by item code until the item
+# special-renderer port consumes it.
+overlay = render_dir / "MinePadOverlayRenderer.java"
+if overlay.exists():
+    overlay.write_text("""package net.montoyo.wd.client.renderers;
+
+import com.mojang.blaze3d.vertex.PoseStack;
+
+/**
+ * Compatibility queue surface for the 26.2 MinePad special-renderer migration.
+ * GUI MinePad rendering no longer uses raw global GL matrices.
+ */
+public final class MinePadOverlayRenderer {
+    private MinePadOverlayRenderer() {}
+    public static void queueRender(PoseStack poseStack, double x1, double y1, double x2, double y2, int textureId) {}
+    public static void clearPendingRenders() {}
+}
+""", encoding="utf-8")
+
+
+# 26.2 BlockEntityType has a public factory+Set constructor, no Builder.
+tile = DST / "src/main/java/net/montoyo/wd/registry/TileRegistry.java"
+if tile.exists():
+    text = tile.read_text(encoding="utf-8")
+    text = re.sub(
+        r'BlockEntityType\.Builder\.of\(([^;]+?)\)\.build\(null\)',
+        r'new BlockEntityType<>(\1)',
+        text
+    )
+    # Convert factory,varargs blocks into factory, Set.of(blocks).
+    text = re.sub(
+        r'new BlockEntityType<>\(([^,\n]+),\s*([^)]+)\)',
+        lambda m: 'new BlockEntityType<>(' + m.group(1) + ', java.util.Set.of(' + m.group(2) + '))',
+        text
+    )
+    tile.write_text(text, encoding="utf-8")
+
+
+# Avoid accidental global Optional rewrite of JDK Boolean system properties.
+log = DST / "src/main/java/net/montoyo/wd/utilities/Log.java"
+if log.exists():
+    text=log.read_text(encoding="utf-8").replace("Boolean.getBooleanOr(", "Boolean.getBoolean(")
+    # Previous mechanical replacement may have left a default argument.
+    text=re.sub(r'Boolean\.getBoolean\(([^,]+),\s*false\)', r'Boolean.getBoolean(\1)', text)
+    log.write_text(text,encoding="utf-8")
+
+
+# Remove the stale crosshair mixin call while its 26.2 HUD render-state hook is
+# being migrated; this prevents calling a deliberately removed legacy callback.
+overlay_mixin = DST / "src/main/java/net/montoyo/wd/mixins/OverlayMixin.java"
+if overlay_mixin.exists():
+    text=overlay_mixin.read_text(encoding="utf-8")
+    text=remove_java_method(text,"private void renderCrosshair(")
+    text=remove_java_method(text,"public void renderCrosshair(")
+    overlay_mixin.write_text(text,encoding="utf-8")
+
+
+# Final call-site cleanup for extractor-based Control helpers.
+for java in (DST / "src/main/java/net/montoyo/wd/client/gui").rglob("*.java"):
+    text=java.read_text(encoding="utf-8")
+    text=text.replace("fillRect(poseStack.bufferSource(),", "fillRect(poseStack,")
+    text=text.replace("fillRect(graphics.bufferSource(),", "fillRect(graphics,")
+    text=text.replace("fillTexturedRect(poseStack.pose(),", "fillTexturedRect(poseStack,")
+    text=text.replace("fillTexturedRect(graphics.pose(),", "fillTexturedRect(graphics,")
+    text=text.replace(".drawCenteredString(", ".centeredText(")
+    java.write_text(text,encoding="utf-8")
+
+print("GUI and registry 26.2 port pass complete")
