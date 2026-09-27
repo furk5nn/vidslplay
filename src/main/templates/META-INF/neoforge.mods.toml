@@ -5,7 +5,7 @@ modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
 description='''
-A simple local MP4 video screen with automatically merging screen blocks.
+Local video screens rendered through Rinku/Chromium.
 '''
 
 [[dependencies.${mod_id}]]
@@ -22,18 +22,9 @@ versionRange="${minecraft_version_range}"
 ordering="NONE"
 side="BOTH"
 
-
-
 [[dependencies.${mod_id}]]
-modId="watermedia"
+modId="rinku"
 type="required"
-versionRange="[3.0.0.23,)"
-ordering="AFTER"
-side="CLIENT"
-
-[[dependencies.${mod_id}]]
-modId="watermedia_binaries"
-type="required"
-versionRange="[3.0.0.6,)"
+versionRange="[${rinku_version},)"
 ordering="AFTER"
 side="CLIENT"
