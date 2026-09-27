@@ -160,6 +160,112 @@ pack.write_text("""{
 }
 """, encoding="utf-8")
 
+
+# Client-local media bridge for integrations such as WebDisplays.
+# It deliberately exposes only one chosen URI per player object and never scans the filesystem.
+api_dir = DST / "src/main/java/me/srrapero720/waterframes/api"
+api_dir.mkdir(parents=True, exist_ok=True)
+(api_dir / "LocalMediaPlayer.java").write_text("""package me.srrapero720.waterframes.api;
+
+import com.mojang.blaze3d.opengl.GlStateManager;
+import me.srrapero720.waterframes.DisplaysRegistry;
+import me.srrapero720.waterframes.WaterFrames;
+import me.srrapero720.waterframes.client.rendering.TextureWrapper;
+import net.minecraft.client.Minecraft;
+import net.minecraft.resources.Identifier;
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.api.distmarker.OnlyIn;
+import org.watermedia.api.player.videolan.VideoPlayer;
+
+import java.net.URI;
+
+/**
+ * Small client-local WaterFrames playback bridge for another screen renderer.
+ * The caller supplies one URI explicitly; no filesystem enumeration is performed.
+ */
+@OnlyIn(Dist.CLIENT)
+public final class LocalMediaPlayer implements AutoCloseable {
+    private final VideoPlayer player;
+    private final URI source;
+    private Identifier textureId;
+    private int registeredNativeTexture = -1;
+    private boolean closed;
+
+    public LocalMediaPlayer(URI source) {
+        this.source = source;
+        this.player = new VideoPlayer(runnable -> {
+            Minecraft.getInstance().execute(runnable);
+            GlStateManager._bindTexture(0);
+        });
+        this.player.setRepeatMode(true);
+        this.player.setMuteMode(false);
+        this.player.setVolume(100);
+        this.player.start(source);
+    }
+
+    public URI source() {
+        return source;
+    }
+
+    public boolean isReady() {
+        return !closed && !player.isBroken() && player.isReady() && player.texture() > 0;
+    }
+
+    public boolean isLoading() {
+        return !closed && (player.isWaiting() || player.isLoading());
+    }
+
+    public Identifier texture() {
+        if (!isReady()) return null;
+        player.preRender();
+        int nativeTexture = player.texture();
+        if (nativeTexture <= 0) return null;
+
+        if (textureId == null || nativeTexture != registeredNativeTexture) {
+            if (textureId != null) {
+                DisplaysRegistry.unregisterTexture(textureId);
+            }
+            registeredNativeTexture = nativeTexture;
+            textureId = WaterFrames.asResource("webdisplays_local_" + Integer.toUnsignedString(System.identityHashCode(this)));
+            DisplaysRegistry.registerTexture(textureId,
+                    new TextureWrapper(nativeTexture, Math.max(1, player.width()), Math.max(1, player.height())));
+        }
+        return textureId;
+    }
+
+    public void setPaused(boolean paused) {
+        if (!closed) player.setPauseMode(paused);
+    }
+
+    public void setMuted(boolean muted) {
+        if (!closed) player.setMuteMode(muted);
+    }
+
+    public void setVolume(float volume01) {
+        if (!closed) player.setVolume(Math.max(0, Math.min(100, Math.round(volume01 * 100.0f))));
+    }
+
+    public int width() {
+        return player.width();
+    }
+
+    public int height() {
+        return player.height();
+    }
+
+    @Override
+    public void close() {
+        if (closed) return;
+        closed = true;
+        if (textureId != null) {
+            DisplaysRegistry.unregisterTexture(textureId);
+            textureId = null;
+        }
+        player.release();
+    }
+}
+""", encoding="utf-8")
+
 print("Prepared", DST)
 
 
