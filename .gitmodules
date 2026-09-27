@@ -13,6 +13,11 @@
 	url = https://github.com/mekos2772/webdisplays.git
 	branch = main
 
+[submodule "reference/webdisplays-brotherbill-1.21.1"]
+	path = reference/webdisplays-brotherbill-1.21.1
+	url = https://github.com/brother-bill/webdisplays-mc.git
+	branch = main
+
 [submodule "reference/waterframes-1.21.8"]
 	path = reference/waterframes-1.21.8
 	url = https://github.com/SrRapero720/waterframes.git
