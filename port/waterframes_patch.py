@@ -799,3 +799,114 @@ for rel in screen_files:
     p.write_text(s, encoding="utf-8")
 
 # Remote screen also uses pair/triple custom tables after the generic pass.
+
+
+# ---------------------------------------------------------------------------
+# Prefer WaterFrames' own 1.21.8 GUI migration over locally reinventing it.
+# The 1.21.8 branch already migrated the controls to CreativeCore's parent-aware
+# API. We transplant only the common GUI/data pieces into the NeoForge port.
+# ---------------------------------------------------------------------------
+REF_218 = ROOT / "reference" / "waterframes-1.21.8"
+
+modern_dirs = [
+    "src/main/java/me/srrapero720/waterframes/common/screens",
+]
+for rel in modern_dirs:
+    src_dir = REF_218 / rel
+    dst_dir = DST / rel
+    if dst_dir.exists():
+        shutil.rmtree(dst_dir)
+    shutil.copytree(src_dir, dst_dir)
+
+for rel in [
+    "src/main/java/me/srrapero720/waterframes/common/block/data/DisplayData.java",
+    "src/main/java/me/srrapero720/waterframes/common/item/RemoteControl.java",
+]:
+    shutil.copy2(REF_218 / rel, DST / rel)
+
+# Adapt the transplanted Fabric/common code to NeoForge + 26.2 naming.
+for java in (DST / "src/main/java/me/srrapero720/waterframes/common/screens").rglob("*.java"):
+    text = java.read_text(encoding="utf-8")
+    text = text.replace("import net.fabricmc.api.EnvType;\n", "")
+    text = text.replace("import net.fabricmc.api.Environment;\n", "")
+    if "@Environment(EnvType.CLIENT)" in text:
+        if "import net.neoforged.api.distmarker.Dist;" not in text:
+            # place after package declaration
+            text = text.replace("\n\n", "\n\nimport net.neoforged.api.distmarker.Dist;\nimport net.neoforged.api.distmarker.OnlyIn;\n\n", 1)
+        text = text.replace("@Environment(EnvType.CLIENT)", "@OnlyIn(Dist.CLIENT)")
+    text = text.replace("import net.minecraft.resources.ResourceLocation;", "import net.minecraft.resources.Identifier;")
+    text = re.sub(r"\bResourceLocation\b", "Identifier", text)
+    text = text.replace("import net.minecraft.Util;", "import net.minecraft.util.Util;")
+    text = text.replace(".isClientSide", ".isClientSide()")
+    text = text.replace(".isClientSide()()", ".isClientSide()")
+    java.write_text(text, encoding="utf-8")
+
+# Modern common data already uses ValueInput/ValueOutput; keep CompoundTag for packets.
+data = DST / "src/main/java/me/srrapero720/waterframes/common/block/data/DisplayData.java"
+s = data.read_text(encoding="utf-8")
+s = s.replace("import net.minecraft.Util;", "import net.minecraft.util.Util;")
+s = s.replace("screen.flip_x.getValue()", "screen.flip_x.get()")
+s = s.replace("screen.flip_y.getValue()", "screen.flip_y.get()")
+s = s.replace("screen.show_model.getValue()", "screen.show_model.get()")
+s = s.replace("screen.lit.getValue()", "screen.lit.get()")
+s = s.replace("screen.mirror.value", "screen.mirror.getState()")
+data.write_text(s, encoding="utf-8")
+
+remote = DST / "src/main/java/me/srrapero720/waterframes/common/item/RemoteControl.java"
+s = remote.read_text(encoding="utf-8")
+s = s.replace("import net.fabricmc.api.EnvType;\n", "")
+s = s.replace("import net.fabricmc.api.Environment;\n", "")
+if "@Environment(EnvType.CLIENT)" in s:
+    if "import net.neoforged.api.distmarker.Dist;" not in s:
+        s = s.replace("\n\n", "\n\nimport net.neoforged.api.distmarker.Dist;\nimport net.neoforged.api.distmarker.OnlyIn;\n\n", 1)
+    s = s.replace("@Environment(EnvType.CLIENT)", "@OnlyIn(Dist.CLIENT)")
+s = s.replace("import net.minecraft.resources.ResourceLocation;", "import net.minecraft.resources.Identifier;")
+s = re.sub(r"\bResourceLocation\b", "Identifier", s)
+s = s.replace(".dimension().location()", ".dimension().identifier()")
+s = re.sub(r'player\.displayClientMessage\(([^;]+?),\s*true\);', r'player.sendOverlayMessage(\1);', s)
+remote.write_text(s, encoding="utf-8")
+
+# 26.2: LightTexture was split; packed-light constants live in LightCoordsUtil.
+rr = DST / "src/main/java/me/srrapero720/waterframes/client/rendering/DisplayRenderer.java"
+s = rr.read_text(encoding="utf-8")
+s = s.replace("import net.minecraft.client.renderer.LightTexture;", "import net.minecraft.util.LightCoordsUtil;")
+s = s.replace("LightTexture.FULL_BRIGHT", "LightCoordsUtil.FULL_BRIGHT")
+rr.write_text(s, encoding="utf-8")
+
+# GuiLayer layout fields became setters; formatting setter was unified.
+display_screen = DST / "src/main/java/me/srrapero720/waterframes/common/screens/DisplayScreen.java"
+s = display_screen.read_text(encoding="utf-8")
+s = s.replace("this.flow = GuiFlow.STACK_Y;", "this.setFlow(GuiFlow.STACK_Y);")
+s = s.replace(".setControlFormatting(", ".setFormatting(")
+display_screen.write_text(s, encoding="utf-8")
+
+remote_screen = DST / "src/main/java/me/srrapero720/waterframes/common/screens/RemoteControlScreen.java"
+s = remote_screen.read_text(encoding="utf-8")
+s = s.replace("this.align = Align.STRETCH;", "this.setAlign(Align.STRETCH);")
+s = s.replace("this.flow = GuiFlow.STACK_Y;", "this.setFlow(GuiFlow.STACK_Y);")
+remote_screen.write_text(s, encoding="utf-8")
+
+# Current command/profile API cleanups.
+cmd = DST / "src/main/java/me/srrapero720/waterframes/common/commands/WaterFramesCommand.java"
+s = cmd.read_text(encoding="utf-8")
+s = s.replace("FMLLoader.getDist()", "FMLLoader.getCurrent().getDist()")
+s = s.replace(".getGameProfile().getName()", ".getGameProfile().name()")
+s = s.replace(".getProfileCache().get(tile.data.uuid)", ".services().profileResolver().fetchById(tile.data.uuid)")
+s = s.replace("input.createItemStack(1, false)", "input.createItemStack(1)")
+# Numeric command permissions moved to PermissionSet.
+s = s.replace(
+    "sourceStack.hasPermission(3)",
+    "sourceStack.permissions().hasPermission(new net.minecraft.server.permissions.Permission.HasCommandLevel(net.minecraft.server.permissions.PermissionLevel.ADMINS))"
+)
+cmd.write_text(s, encoding="utf-8")
+
+# Numeric player permissions moved to PermissionSet.
+cfg = DST / "src/main/java/me/srrapero720/waterframes/DisplaysConfig.java"
+s = cfg.read_text(encoding="utf-8")
+s = s.replace("integrated.getOperatorUserPermissionLevel()", "4")
+s = re.sub(
+    r'player\.hasPermissions\((\d+)\)',
+    r'player.permissions().hasPermission(new net.minecraft.server.permissions.Permission.HasCommandLevel(net.minecraft.server.permissions.PermissionLevel.byId(\1)))',
+    s
+)
+cfg.write_text(s, encoding="utf-8")
