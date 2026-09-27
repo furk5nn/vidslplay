@@ -337,6 +337,229 @@ if screen_be.exists():
     screen_be.write_text(s, encoding="utf-8")
 
 
+
+# Full 26.2 persistence port for the WebDisplays screen graph.
+screen_data = DST / "src/main/java/net/montoyo/wd/entity/ScreenData.java"
+if screen_data.exists():
+    s = screen_data.read_text(encoding="utf-8")
+    s = s.replace("import net.minecraft.core.HolderLookup;\n", "")
+    s = s.replace("import net.minecraft.nbt.CompoundTag;\n", "")
+    s = s.replace("import net.minecraft.nbt.ListTag;\n", "")
+    if "import net.minecraft.core.UUIDUtil;" not in s:
+        s = s.replace("import net.minecraft.core.Direction;\n", "import net.minecraft.core.Direction;\nimport net.minecraft.core.UUIDUtil;\n")
+    if "import net.minecraft.world.level.storage.ValueInput;" not in s:
+        s = s.replace("import net.minecraft.world.level.Level;\n",
+                      "import net.minecraft.world.level.Level;\nimport net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;\n")
+
+    start = s.index("    public static ScreenData deserialize(")
+    end = s.index("    public int rightsFor(", start)
+    methods = r'''    public static ScreenData deserialize(ValueInput input) {
+        ScreenData ret = new ScreenData();
+
+        int sideIndex = Byte.toUnsignedInt(input.getByteOr("Side", (byte) 0));
+        int rotationIndex = Byte.toUnsignedInt(input.getByteOr("Rotation", (byte) 0));
+        ret.side = BlockSide.values()[Math.min(sideIndex, BlockSide.values().length - 1)];
+        ret.size = new Vector2i(
+                Math.max(1, input.getIntOr("Width", 1)),
+                Math.max(1, input.getIntOr("Height", 1))
+        );
+        ret.resolution = new Vector2i(
+                input.getIntOr("ResolutionX", 0),
+                input.getIntOr("ResolutionY", 0)
+        );
+        ret.rotation = Rotation.values()[Math.min(rotationIndex, Rotation.values().length - 1)];
+        ret.url = input.getStringOr("URL", "");
+        ret.videoType = VideoType.getTypeFromURL(ret.url);
+
+        if (ret.resolution.x <= 0 || ret.resolution.y <= 0) {
+            float psx = ((float) ret.size.x) * 16.f - 4.f;
+            float psy = ((float) ret.size.y) * 16.f - 4.f;
+            ret.resolution.x = (int) (psx * 8.f);
+            ret.resolution.y = (int) (psy * 8.f);
+        }
+
+        String ownerName = input.getStringOr("OwnerName", "");
+        UUID ownerUuid = input.read("OwnerUUID", UUIDUtil.CODEC).orElse(null);
+        if (!ownerName.isEmpty() && ownerUuid != null) {
+            ret.owner = new NameUUIDPair(ownerName, ownerUuid);
+        }
+
+        ret.friends = new ArrayList<>();
+        for (ValueInput friend : input.childrenListOrEmpty("Friends")) {
+            String name = friend.getStringOr("Name", "");
+            UUID uuid = friend.read("UUID", UUIDUtil.CODEC).orElse(null);
+            if (uuid != null) ret.friends.add(new NameUUIDPair(name, uuid));
+        }
+
+        ret.friendRights = Byte.toUnsignedInt(input.getByteOr("FriendRights", (byte) 0));
+        ret.otherRights = Byte.toUnsignedInt(input.getByteOr("OtherRights", (byte) 0));
+
+        ret.upgrades = new ArrayList<>();
+        for (ItemStack stack : input.listOrEmpty("Upgrades", ItemStack.CODEC)) {
+            if (!stack.isEmpty()) ret.upgrades.add(stack);
+        }
+
+        ret.autoVolume = input.getBooleanOr("AutoVolume", true);
+        ret.ownerVolume = Math.max(0, Math.min(100, input.getIntOr("OwnerVolume", 100)));
+        ret.userSyncEnabled = input.getBooleanOr("SyncEnabled", false);
+        ret.syncMasterUUID = input.read("SyncMaster", UUIDUtil.CODEC).orElse(null);
+        ret.syncPlaybackTime = input.getDoubleOr("SyncTime", 0.0);
+        ret.syncPaused = input.getBooleanOr("SyncPaused", false);
+        ret.syncUpdateTimestamp = input.getLongOr("SyncTs", 0L);
+        return ret;
+    }
+
+    public void serialize(ValueOutput output) {
+        output.putByte("Side", (byte) side.ordinal());
+        output.putInt("Width", size.x);
+        output.putInt("Height", size.y);
+        output.putInt("ResolutionX", resolution.x);
+        output.putInt("ResolutionY", resolution.y);
+        output.putByte("Rotation", (byte) rotation.ordinal());
+        output.putString("URL", url == null ? "" : url);
+
+        if (owner == null) {
+            Log.warning("Found TES with NO OWNER!!");
+        } else {
+            output.putString("OwnerName", owner.name);
+            output.store("OwnerUUID", UUIDUtil.CODEC, owner.uuid);
+        }
+
+        ValueOutput.ValueOutputList friendList = output.childrenList("Friends");
+        for (NameUUIDPair f : friends) {
+            ValueOutput friend = friendList.addChild();
+            friend.putString("Name", f.name);
+            friend.store("UUID", UUIDUtil.CODEC, f.uuid);
+        }
+
+        output.putByte("FriendRights", (byte) friendRights);
+        output.putByte("OtherRights", (byte) otherRights);
+
+        ValueOutput.TypedOutputList<ItemStack> upgradeList = output.list("Upgrades", ItemStack.CODEC);
+        for (ItemStack stack : upgrades) {
+            if (!stack.isEmpty()) upgradeList.add(stack);
+        }
+
+        output.putBoolean("AutoVolume", autoVolume);
+        output.putInt("OwnerVolume", ownerVolume);
+        output.putBoolean("SyncEnabled", userSyncEnabled);
+        if (syncMasterUUID != null) output.store("SyncMaster", UUIDUtil.CODEC, syncMasterUUID);
+        output.putDouble("SyncTime", syncPlaybackTime);
+        output.putBoolean("SyncPaused", syncPaused);
+        output.putLong("SyncTs", syncUpdateTimestamp);
+    }
+
+'''
+    s = s[:start] + methods + s[end:]
+    screen_data.write_text(s, encoding="utf-8")
+
+screen_be = DST / "src/main/java/net/montoyo/wd/entity/ScreenBlockEntity.java"
+if screen_be.exists():
+    s = screen_be.read_text(encoding="utf-8")
+    s = s.replace("import net.minecraft.nbt.ListTag;\n", "")
+    s = s.replace("import net.minecraft.nbt.Tag;\n", "")
+    if "import net.minecraft.core.HolderLookup;" not in s:
+        s = s.replace("import net.minecraft.core.Direction;\n", "import net.minecraft.core.Direction;\nimport net.minecraft.core.HolderLookup;\n")
+    if "import net.minecraft.world.level.storage.ValueInput;" not in s:
+        s = s.replace("import net.minecraft.world.level.block.state.BlockState;\n",
+                      "import net.minecraft.world.level.block.state.BlockState;\nimport net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;\n")
+
+    load_start = s.index("    @Override\n    protected void loadAdditional(")
+    after_save = s.index("    public ScreenData addScreen(", load_start)
+    persistence = r'''    @Override
+    protected void loadAdditional(ValueInput input) {
+        super.loadAdditional(input);
+
+        for (ScreenData screen : screens) {
+            if (screen.browser != null) {
+                screen.browser.close(true);
+                screen.browser = null;
+            }
+        }
+
+        screens.clear();
+        for (ValueInput child : input.childrenListOrEmpty("WDScreens")) {
+            screens.add(ScreenData.deserialize(child));
+        }
+        loaded = false;
+        updateAABB();
+    }
+
+    @Override
+    protected void saveAdditional(ValueOutput output) {
+        super.saveAdditional(output);
+        ValueOutput.ValueOutputList list = output.childrenList("WDScreens");
+        for (ScreenData screen : screens) {
+            screen.serialize(list.addChild());
+        }
+    }
+
+    @Override
+    public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
+        return saveCustomOnly(registries);
+    }
+
+    @Override
+    public void handleUpdateTag(ValueInput input) {
+        super.handleUpdateTag(input);
+        for (ScreenData screen : screens) {
+            if (screen.browser == null) screen.createBrowser(this, false);
+            if (screen.browser != null) screen.browser.loadURL(screen.url);
+        }
+        updateAABB();
+    }
+
+'''
+    s = s[:load_start] + persistence + s[after_save:]
+    screen_be.write_text(s, encoding="utf-8")
+
+peripheral = DST / "src/main/java/net/montoyo/wd/entity/AbstractPeripheralBlockEntity.java"
+if peripheral.exists():
+    s = peripheral.read_text(encoding="utf-8")
+    s = s.replace("import net.minecraft.core.HolderLookup;\n", "")
+    s = s.replace("import net.minecraft.nbt.CompoundTag;\n", "")
+    if "import net.minecraft.world.level.storage.ValueInput;" not in s:
+        s = s.replace("import net.minecraft.world.level.chunk.LevelChunk;\n",
+                      "import net.minecraft.world.level.chunk.LevelChunk;\nimport net.minecraft.world.level.storage.ValueInput;\nimport net.minecraft.world.level.storage.ValueOutput;\n")
+
+    start = s.index("    @Override\n    protected void loadAdditional(")
+    end = s.index("    @Override\n    public boolean connect(", start)
+    methods = r'''    @Override
+    protected void loadAdditional(ValueInput input) {
+        super.loadAdditional(input);
+        var child = input.child("WDScreen");
+        if (child.isPresent()) {
+            ValueInput screen = child.get();
+            screenPos = new Vector3i(
+                    screen.getIntOr("X", 0),
+                    screen.getIntOr("Y", 0),
+                    screen.getIntOr("Z", 0)
+            );
+            int side = Byte.toUnsignedInt(screen.getByteOr("Side", (byte) 0));
+            screenSide = BlockSide.values()[Math.min(side, BlockSide.values().length - 1)];
+        } else {
+            screenPos = null;
+            screenSide = null;
+        }
+    }
+
+    @Override
+    protected void saveAdditional(ValueOutput output) {
+        super.saveAdditional(output);
+        if (screenPos != null && screenSide != null) {
+            ValueOutput screen = output.child("WDScreen");
+            screen.putInt("X", screenPos.x);
+            screen.putInt("Y", screenPos.y);
+            screen.putInt("Z", screenPos.z);
+            screen.putByte("Side", (byte) screenSide.ordinal());
+        }
+    }
+
+'''
+    s = s[:start] + methods + s[end:]
+    peripheral.write_text(s, encoding="utf-8")
+
+
 # Current resource metadata.
 (DST / "src/main/resources/pack.mcmeta").write_text("""{
   "pack": {
