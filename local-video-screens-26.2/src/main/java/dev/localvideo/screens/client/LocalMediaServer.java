@@ -57,7 +57,7 @@ final class LocalMediaServer implements AutoCloseable {
                       </style>
                     </head>
                     <body>
-                      <video id="v" autoplay muted playsinline preload="auto" src="/media"></video>
+                      <video id="v" autoplay muted playsinline preload="auto" controls src="/media"></video>
                       <script>
                         const v=document.getElementById('v');
                         const unmute=()=>{
