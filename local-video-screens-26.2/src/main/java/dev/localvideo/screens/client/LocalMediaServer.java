@@ -48,7 +48,7 @@ final class LocalMediaServer implements AutoCloseable {
 
             String mediaMime = mimeType(file.getName());
             String safeName = escapeHtml(file.getName());
-            byte[] html = ("""
+            String htmlText = """
                     <!doctype html>
                     <html>
                     <head>
@@ -56,7 +56,7 @@ final class LocalMediaServer implements AutoCloseable {
                       <style>
                         html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:monospace}
                         video{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
-                        #diag{position:fixed;left:12px;top:12px;z-index:10;max-width:calc(100%% - 24px);
+                        #diag{position:fixed;left:12px;top:12px;z-index:10;max-width:calc(100% - 24px);
                               padding:8px 10px;background:rgba(0,0,0,.72);font-size:15px;line-height:1.35;
                               white-space:pre-wrap;pointer-events:none}
                       </style>
@@ -64,9 +64,9 @@ final class LocalMediaServer implements AutoCloseable {
                     <body>
                       <video id="v" autoplay muted playsinline preload="auto" controls src="/media"></video>
                       <div id="diag">PLAYER PAGE LOADED
-                    file: %s
-                    mime: %s
-                    bytes: %d
+                    file: __FILE__
+                    mime: __MIME__
+                    bytes: __BYTES__
                     state: waiting for media...</div>
                       <script>
                         const v=document.getElementById('v');
@@ -74,12 +74,12 @@ final class LocalMediaServer implements AutoCloseable {
                         const names={1:'MEDIA_ERR_ABORTED',2:'MEDIA_ERR_NETWORK',3:'MEDIA_ERR_DECODE',4:'MEDIA_ERR_SRC_NOT_SUPPORTED'};
                         const show=(msg)=>{
                           const err=v.error ? (names[v.error.code]||('MEDIA_ERROR_'+v.error.code)) : 'none';
-                          d.textContent='PLAYER PAGE LOADED\n'
-                            +'file: %s\n'
-                            +'mime: %s\n'
-                            +'state: '+msg+'\n'
-                            +'readyState: '+v.readyState+' networkState: '+v.networkState+'\n'
-                            +'error: '+err+'\n'
+                          d.textContent='PLAYER PAGE LOADED\\n'
+                            +'file: __FILE__\\n'
+                            +'mime: __MIME__\\n'
+                            +'state: '+msg+'\\n'
+                            +'readyState: '+v.readyState+' networkState: '+v.networkState+'\\n'
+                            +'error: '+err+'\\n'
                             +'currentSrc: '+v.currentSrc;
                         };
                         ['loadstart','loadedmetadata','loadeddata','canplay','playing','pause','stalled','suspend','waiting','ended','emptied']
@@ -95,8 +95,11 @@ final class LocalMediaServer implements AutoCloseable {
                       </script>
                     </body>
                     </html>
-                    """).formatted(safeName, mediaMime, file.length(), safeName, mediaMime)
-                    .getBytes(StandardCharsets.UTF_8);
+                    """
+                    .replace("__FILE__", safeName)
+                    .replace("__MIME__", mediaMime)
+                    .replace("__BYTES__", Long.toString(file.length()));
+            byte[] html = htmlText.getBytes(StandardCharsets.UTF_8);
 
             Headers h = exchange.getResponseHeaders();
             h.set("Content-Type", "text/html; charset=utf-8");
