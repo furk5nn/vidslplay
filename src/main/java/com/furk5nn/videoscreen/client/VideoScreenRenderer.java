@@ -40,8 +40,10 @@ public final class VideoScreenRenderer implements BlockEntityRenderer<VideoScree
         state.texture = player.texture();
         if (state.texture == null) return;
         state.facing = panel.facing();
-        state.u0 = (float) panel.x() / panel.width();
-        state.u1 = (float) (panel.x() + 1) / panel.width();
+        // Rinku's browser texture arrives horizontally opposite to the world-space
+        // screen orientation used by this renderer. Flip U once here for the whole panel.
+        state.u0 = 1.0F - (float) (panel.x() + 1) / panel.width();
+        state.u1 = 1.0F - (float) panel.x() / panel.width();
         state.v0 = 1.0F - (float) (panel.y() + 1) / panel.height();
         state.v1 = 1.0F - (float) panel.y() / panel.height();
     }
