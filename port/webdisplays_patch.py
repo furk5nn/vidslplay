@@ -152,6 +152,7 @@ for java in (DST / "src/main/java").rglob("*.java"):
         "import net.minecraft.world.level.block.state.properties.EnumProperty;\n"
     )
     s = re.sub(r"\bDirectionProperty\b", "EnumProperty<Direction>", s)
+    s = s.replace("EnumProperty<Direction>.create(", "EnumProperty.create(")
 
     # Model/render package moves in 26.2.
     s = s.replace(
@@ -269,16 +270,51 @@ public final class ModelMinePad {
 }
 """, encoding="utf-8")
 
-# Remove old hand-render/highlight hooks that use APIs removed in 26.2. They are
-# restored later with the new item feature-renderer API.
+# Remove old hand-render/highlight hooks that use APIs removed in 26.2.
+# Use brace matching, not regex, because these methods contain nested blocks.
+def remove_java_method(source: str, signature: str) -> str:
+    sig = source.find(signature)
+    if sig < 0:
+        return source
+    start = source.rfind("\n", 0, sig)
+    if start < 0:
+        start = 0
+    ann_start = source.rfind("\n", 0, start)
+    if ann_start >= 0 and "@SubscribeEvent" in source[ann_start:start]:
+        start = ann_start
+    brace = source.find("{", sig)
+    if brace < 0:
+        return source
+    depth = 0
+    i = brace
+    while i < len(source):
+        ch = source[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                while end < len(source) and source[end] in " \t":
+                    end += 1
+                if end < len(source) and source[end] == "\r":
+                    end += 1
+                if end < len(source) and source[end] == "\n":
+                    end += 1
+                return source[:start] + "\n" + source[end:]
+        i += 1
+    raise RuntimeError(f"Unbalanced Java method while removing: {signature}")
+
 client_proxy = DST / "src/main/java/net/montoyo/wd/client/ClientProxy.java"
 if client_proxy.exists():
     s = client_proxy.read_text(encoding="utf-8")
     s = s.replace("import com.mojang.blaze3d.platform.GlStateManager;", "import com.mojang.blaze3d.opengl.GlStateManager;")
     s = s.replace("import net.neoforged.neoforge.client.event.RenderHighlightEvent;\n", "")
-    s = re.sub(r"\n\s*@SubscribeEvent\s+public void onRenderPlayerHand\(RenderHandEvent ev\) \{.*?\n\s*\}", "\n", s, flags=re.S)
-    s = re.sub(r"\n\s*public static void onDrawSelection\(RenderHighlightEvent\.Block event\) \{.*?\n\s*\}", "\n", s, flags=re.S)
+    s = s.replace("import net.neoforged.neoforge.client.event.RenderHandEvent;\n", "")
+    s = remove_java_method(s, "public void onRenderPlayerHand(RenderHandEvent ev)")
+    s = remove_java_method(s, "public static void onDrawSelection(RenderHighlightEvent.Block event)")
     client_proxy.write_text(s, encoding="utf-8")
+
 
 webdisplays_java = DST / "src/main/java/net/montoyo/wd/WebDisplays.java"
 if webdisplays_java.exists():
