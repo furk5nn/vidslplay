@@ -1,6 +1,5 @@
 package com.furk5nn.videoscreen.client;
 
-import de.keksuccino.rinku.Rinku;
 import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
@@ -12,23 +11,18 @@ import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
 public final class ClientVideoManager {
     public static final ClientVideoManager INSTANCE = new ClientVideoManager();
-    private final Map<Long, ChromiumVideoPlayer> players = new HashMap<>();
+    private final Map<Long, WaterMediaVideoPlayer> players = new HashMap<>();
 
     private ClientVideoManager() {}
 
     public void interact(Level level, BlockPos pos, BlockState state) {
         PanelLayout panel = PanelLayout.find(level, pos, state);
         long key = panel.root().asLong();
-        ChromiumVideoPlayer current = players.get(key);
+        WaterMediaVideoPlayer current = players.get(key);
 
         if (Minecraft.getInstance().options.keyShift.isDown() && current != null) {
             current.togglePause();
             message(current.isPaused() ? "Video paused" : "Video playing");
-            return;
-        }
-
-        if (!Rinku.isInitialized()) {
-            message("Rinku/Chromium is still initializing. Try again in a few seconds.");
             return;
         }
 
@@ -42,12 +36,10 @@ public final class ClientVideoManager {
         }
 
         try {
-            ChromiumVideoPlayer old = players.remove(key);
+            WaterMediaVideoPlayer old = players.remove(key);
             if (old != null) old.close();
 
-            int width = Math.min(1920, Math.max(640, panel.width() * 160));
-            int height = Math.min(1080, Math.max(360, panel.height() * 160));
-            ChromiumVideoPlayer player = new ChromiumVideoPlayer(new File(selected), width, height);
+            WaterMediaVideoPlayer player = new WaterMediaVideoPlayer(new File(selected));
             players.put(key, player);
             message("Loaded: " + new File(selected).getName() + " | Shift + right click = pause/play");
         } catch (Exception e) {
@@ -56,13 +48,9 @@ public final class ClientVideoManager {
         }
     }
 
-    public ChromiumVideoPlayer playerFor(PanelLayout panel) {
-        ChromiumVideoPlayer player = players.get(panel.root().asLong());
-        if (player != null) {
-            int width = Math.min(1920, Math.max(640, panel.width() * 160));
-            int height = Math.min(1080, Math.max(360, panel.height() * 160));
-            player.resize(width, height);
-        }
+    public WaterMediaVideoPlayer playerFor(PanelLayout panel) {
+        WaterMediaVideoPlayer player = players.get(panel.root().asLong());
+        if (player != null) player.tickInit();
         return player;
     }
 
