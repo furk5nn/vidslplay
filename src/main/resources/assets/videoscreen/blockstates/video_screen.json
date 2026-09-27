@@ -1,8 +1,0 @@
-{
-  "variants": {
-    "facing=north": { "model": "videoscreen:block/video_screen" },
-    "facing=east":  { "model": "videoscreen:block/video_screen", "y": 90 },
-    "facing=south": { "model": "videoscreen:block/video_screen", "y": 180 },
-    "facing=west":  { "model": "videoscreen:block/video_screen", "y": 270 }
-  }
-}

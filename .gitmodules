@@ -1,0 +1,9 @@
+[submodule "upstream/webdisplays"]
+	path = upstream/webdisplays
+	url = https://github.com/CinemaMod/webdisplays.git
+	branch = 1.20
+
+[submodule "upstream/waterframes"]
+	path = upstream/waterframes
+	url = https://github.com/SrRapero720/waterframes.git
+	branch = 1.21.5
