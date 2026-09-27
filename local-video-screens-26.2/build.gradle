@@ -33,6 +33,19 @@ neoForge {
 
 dependencies {
     compileOnly "maven.modrinth:rinku:${rinku_artifact_version}"
+
+    jarJar(implementation("org.bytedeco:javacv:1.5.14")) {
+        version { strictly "[1.5.14]"; prefer "1.5.14" }
+    }
+    jarJar(implementation("org.bytedeco:javacpp:1.5.14")) {
+        version { strictly "[1.5.14]"; prefer "1.5.14" }
+    }
+    jarJar(implementation("org.bytedeco:ffmpeg:8.1.2-1.5.14")) {
+        version { strictly "[8.1.2-1.5.14]"; prefer "8.1.2-1.5.14" }
+    }
+    jarJar(implementation("org.bytedeco:ffmpeg:8.1.2-1.5.14:windows-x86_64")) {
+        version { strictly "[8.1.2-1.5.14]"; prefer "8.1.2-1.5.14" }
+    }
 }
 
 def generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
