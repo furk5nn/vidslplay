@@ -2,7 +2,7 @@ from pathlib import Path
 import shutil, re
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "reference" / "webdisplays-neoforge-1.21.1"
+SRC = ROOT / "reference" / "webdisplays-brotherbill-1.21.1"
 DST = ROOT / "build-port" / "webdisplays"
 
 if DST.exists():
