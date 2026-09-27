@@ -22,15 +22,24 @@ public final class LocalVideoScreensClient {
     }
 
     private void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
-        if (!event.getEntity().isShiftKeyDown()) return;
         if (!event.getLevel().getBlockState(event.getPos()).is(LocalVideoScreens.SCREEN_BLOCK.get())) return;
         if (!event.getLevel().isClientSide()) return;
 
         event.setCanceled(true);
         event.setCancellationResult(InteractionResult.SUCCESS);
 
-        var result = ScreenGeometry.discover(event.getLevel(), event.getPos(), event.getHitVec().getDirection());
         Minecraft mc = Minecraft.getInstance();
+
+        if (!event.getEntity().isShiftKeyDown()) {
+            VideoScreenManager.get().openInteraction(
+                    event.getLevel(),
+                    event.getPos(),
+                    event.getHitVec().getDirection()
+            );
+            return;
+        }
+
+        var result = ScreenGeometry.discover(event.getLevel(), event.getPos(), event.getHitVec().getDirection());
         if (!result.success()) {
             if (mc.player != null) mc.player.sendSystemMessage(Component.literal(result.error()));
             return;
