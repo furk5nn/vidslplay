@@ -9,12 +9,21 @@ group = mod_group_id
 
 repositories {
     mavenCentral()
-    maven { url = "https://www.cursemaven.com" }
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = "Modrinth"
+                url = "https://api.modrinth.com/maven"
+            }
+        }
+        filter {
+            includeGroup "maven.modrinth"
+        }
+    }
 }
 
 dependencies {
-    // Rinku is the actively maintained MCEF/Chromium fork for Minecraft 26.2.
-    implementation "curse.maven:rinku-1366156:8745405"
+    implementation "maven.modrinth:watermedia:3.0.0.23"
 }
 
 base { archivesName = mod_id }
