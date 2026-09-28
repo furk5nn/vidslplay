@@ -17,8 +17,8 @@ final class NativeVideoPicker {
         return t;
     });
 
-    private static final String[] VIDEO_PATTERNS = {
-            "*.mp4", "*.webm", "*.m4v", "*.mov", "*.mkv", "*.avi"
+    private static final String[] MEDIA_PATTERNS = {
+            "*.mp4", "*.webm", "*.m4v", "*.mov", "*.mkv", "*.avi", "*.jpg", "*.jpeg", "*.png", "*.gif", "*.webp", "*.bmp"
     };
 
     private NativeVideoPicker() {}
@@ -27,17 +27,17 @@ final class NativeVideoPicker {
         PICKER.execute(() -> {
             File selected = null;
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                PointerBuffer filters = stack.mallocPointer(VIDEO_PATTERNS.length);
-                for (String pattern : VIDEO_PATTERNS) {
+                PointerBuffer filters = stack.mallocPointer(MEDIA_PATTERNS.length);
+                for (String pattern : MEDIA_PATTERNS) {
                     filters.put(stack.UTF8(pattern));
                 }
                 filters.flip();
 
                 String result = TinyFileDialogs.tinyfd_openFileDialog(
-                        "Video seç",
+                        "Medya seç",
                         "",
                         filters,
-                        "Video files",
+                        "Video ve resim dosyaları",
                         false
                 );
 
