@@ -28,13 +28,11 @@ public final class ScreenFillConfirmScreen extends Screen {
         widthBox = new EditBox(font, centerX - 100, centerY - 42, 95, 20, Component.literal("Genişlik"));
         widthBox.setValue("12");
         widthBox.setMaxLength(2);
-        widthBox.setFilter(ScreenFillConfirmScreen::digitsOnly);
         addRenderableWidget(widthBox);
 
         heightBox = new EditBox(font, centerX + 5, centerY - 42, 95, 20, Component.literal("Yükseklik"));
         heightBox.setValue("6");
         heightBox.setMaxLength(2);
-        heightBox.setFilter(ScreenFillConfirmScreen::digitsOnly);
         addRenderableWidget(heightBox);
 
         addRenderableWidget(Button.builder(
@@ -65,11 +63,4 @@ public final class ScreenFillConfirmScreen extends Screen {
         }
     }
 
-    private static boolean digitsOnly(String value) {
-        if (value.isEmpty()) return true;
-        for (int i = 0; i < value.length(); i++) {
-            if (!Character.isDigit(value.charAt(i))) return false;
-        }
-        return true;
-    }
 }
