@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 final class VideoCompatibilityCache {
+    // Bump this when encoder settings change so stale WebM files are not reused.
     private static final String CACHE_VERSION = "v2-fast720p";
     private static final ExecutorService TRANSCODER = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "LocalVideoScreens-Transcoder");
