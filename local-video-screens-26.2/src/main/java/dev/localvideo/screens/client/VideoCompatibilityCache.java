@@ -33,7 +33,7 @@ final class VideoCompatibilityCache {
         }
 
         String lower = source.getName().toLowerCase(Locale.ROOT);
-        if (lower.endsWith(".webm")) {
+        if (lower.endsWith(".webm") || isImage(lower)) {
             Minecraft.getInstance().execute(() -> callback.accept(source));
             return;
         }
@@ -104,17 +104,18 @@ final class VideoCompatibilityCache {
                 "-y",
                 "-hide_banner",
                 "-loglevel", "error",
-                "-threads", "2",
-                "-filter_threads", "2",
+                "-threads", "4",
+                "-filter_threads", "4",
                 "-i", source.toAbsolutePath().toString(),
                 "-map", "0:v:0",
                 "-map", "0:a:0?",
+                "-vf", "scale=1280:720:force_original_aspect_ratio=decrease",
                 "-c:v", "libvpx-vp9",
                 "-deadline", "realtime",
-                "-cpu-used", "6",
+                "-cpu-used", "8",
                 "-row-mt", "1",
-                "-threads", "2",
-                "-b:v", "2500k",
+                "-threads", "4",
+                "-b:v", "2200k",
                 "-maxrate", "3500k",
                 "-bufsize", "5000k",
                 "-c:a", "libopus",
@@ -133,6 +134,15 @@ final class VideoCompatibilityCache {
         if (exit != 0) {
             throw new IllegalStateException("FFmpeg exit=" + exit + " " + output);
         }
+    }
+
+    private static boolean isImage(String lowerName) {
+        return lowerName.endsWith(".jpg")
+                || lowerName.endsWith(".jpeg")
+                || lowerName.endsWith(".png")
+                || lowerName.endsWith(".gif")
+                || lowerName.endsWith(".webp")
+                || lowerName.endsWith(".bmp");
     }
 
     private static String sha256(String value) throws Exception {
