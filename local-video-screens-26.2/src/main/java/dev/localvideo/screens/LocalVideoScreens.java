@@ -9,6 +9,7 @@ import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
+import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredItem;
 import net.neoforged.neoforge.registries.DeferredRegister;
@@ -31,6 +32,8 @@ public final class LocalVideoScreens {
         BLOCKS.register(modBus);
         ITEMS.register(modBus);
         modBus.addListener(this::addCreative);
+        ScreenFillNetworking.register(modBus);
+        NeoForge.EVENT_BUS.addListener(ScreenCornerFillManager::onBlockPlaced);
     }
 
     private void addCreative(BuildCreativeModeTabContentsEvent event) {
