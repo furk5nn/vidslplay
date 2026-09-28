@@ -31,10 +31,11 @@ public final class LocalVideoScreensClient {
         Minecraft mc = Minecraft.getInstance();
 
         if (!event.getEntity().isShiftKeyDown()) {
-            VideoScreenManager.get().openInteraction(
+            VideoScreenManager.get().browserClick(
                     event.getLevel(),
                     event.getPos(),
-                    event.getHitVec().getDirection()
+                    event.getHitVec().getDirection(),
+                    event.getHitVec().getLocation()
             );
             return;
         }
