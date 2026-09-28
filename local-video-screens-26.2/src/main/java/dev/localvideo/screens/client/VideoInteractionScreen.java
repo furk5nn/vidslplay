@@ -2,7 +2,7 @@ package dev.localvideo.screens.client;
 
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.GuiGraphics;\nimport net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
@@ -44,6 +44,16 @@ final class VideoInteractionScreen extends Screen {
     @Override
     public void extractBackground(GuiGraphicsExtractor guiGraphics, int mouseX, int mouseY, float partialTick) {
         // 26.2 applies the default screen blur here. Interaction mode must leave the world untouched.
+    }
+
+    @Override
+    protected void renderBlurredBackground(float partialTick) {
+        // Keep the world sharp while the mouse is released for browser interaction.
+    }
+
+    @Override
+    public void renderTransparentBackground(GuiGraphics guiGraphics) {
+        // Do not darken the world behind the transparent interaction screen.
     }
 
     @Override
