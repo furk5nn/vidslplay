@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 final class VideoCompatibilityCache {
+    private static final String CACHE_VERSION = "v2-fast720p";
     private static final ExecutorService TRANSCODER = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "LocalVideoScreens-Transcoder");
         t.setDaemon(true);
@@ -45,7 +46,7 @@ final class VideoCompatibilityCache {
                         .resolve("localvideoscreens-cache");
                 Files.createDirectories(cacheDir);
 
-                String fingerprint = source.getCanonicalPath() + "|" + source.length() + "|" + source.lastModified();
+                String fingerprint = CACHE_VERSION + "|" + source.getCanonicalPath() + "|" + source.length() + "|" + source.lastModified();
                 String hash = sha256(fingerprint).substring(0, 24);
                 Path cached = cacheDir.resolve(hash + ".webm");
 
