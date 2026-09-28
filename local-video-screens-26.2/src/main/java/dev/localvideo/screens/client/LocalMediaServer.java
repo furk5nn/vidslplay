@@ -38,6 +38,16 @@ final class LocalMediaServer implements AutoCloseable {
         return "http://127.0.0.1:" + server.getAddress().getPort() + "/player";
     }
 
+    private boolean isImage() {
+        String n = file.getName().toLowerCase(Locale.ROOT);
+        return n.endsWith(".jpg")
+                || n.endsWith(".jpeg")
+                || n.endsWith(".png")
+                || n.endsWith(".gif")
+                || n.endsWith(".webp")
+                || n.endsWith(".bmp");
+    }
+
     private void servePlayer(HttpExchange exchange) throws IOException {
         try {
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())
@@ -46,40 +56,73 @@ final class LocalMediaServer implements AutoCloseable {
                 return;
             }
 
-            byte[] html = """
-                    <!doctype html>
-                    <html>
-                    <head>
-                      <meta charset="utf-8">
-                      <style>
-                        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}
-                        video{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
-                      </style>
-                    </head>
-                    <body>
-                      <video id="v" autoplay muted playsinline preload="auto" controls src="/media"></video>
-                      <script>
-                        const v=document.getElementById('v');
-                        const unmute=()=>{
-                          try {
-                            v.muted=false;
-                            v.volume=1.0;
-                          } catch(e) {}
-                        };
-                        const start=()=>{
-                          const p=v.play();
-                          if(p) p.then(()=>{
-                            setTimeout(unmute, 150);
-                          }).catch(()=>{});
-                        };
-                        v.addEventListener('playing', ()=>setTimeout(unmute, 150));
-                        v.addEventListener('canplay', start, {once:true});
-                        v.addEventListener('loadeddata', start, {once:true});
-                        start();
-                      </script>
-                    </body>
-                    </html>
-                    """.getBytes(StandardCharsets.UTF_8);
+            byte[] html;
+            if (isImage()) {
+                html = """
+                        <!doctype html>
+                        <html>
+                        <head>
+                          <meta charset="utf-8">
+                          <style>
+                            html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}
+                            img{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+                          </style>
+                        </head>
+                        <body>
+                          <img src="/media" draggable="false">
+                        </body>
+                        </html>
+                        """.getBytes(StandardCharsets.UTF_8);
+            } else {
+                html = """
+                        <!doctype html>
+                        <html>
+                        <head>
+                          <meta charset="utf-8">
+                          <style>
+                            html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}
+                            video{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+                            #loop{
+                              position:fixed;right:14px;bottom:54px;z-index:20;
+                              border:1px solid rgba(255,255,255,.55);
+                              border-radius:5px;padding:5px 8px;
+                              background:rgba(0,0,0,.58);color:#fff;
+                              font:12px sans-serif;cursor:pointer;user-select:none;
+                              opacity:.2;transition:opacity .15s, background .15s;
+                            }
+                            body:hover #loop,#loop:hover{opacity:1}
+                            #loop.on{background:rgba(35,140,70,.88)}
+                          </style>
+                        </head>
+                        <body>
+                          <video id="v" autoplay muted playsinline preload="auto" controls src="/media"></video>
+                          <button id="loop" type="button" title="Döngü">↻ LOOP</button>
+                          <script>
+                            const v=document.getElementById('v');
+                            const loop=document.getElementById('loop');
+                            loop.addEventListener('click',()=>{
+                              v.loop=!v.loop;
+                              loop.classList.toggle('on',v.loop);
+                            });
+                            const unmute=()=>{
+                              try {
+                                v.muted=false;
+                                v.volume=1.0;
+                              } catch(e) {}
+                            };
+                            const start=()=>{
+                              const p=v.play();
+                              if(p) p.then(()=>setTimeout(unmute,150)).catch(()=>{});
+                            };
+                            v.addEventListener('playing',()=>setTimeout(unmute,150));
+                            v.addEventListener('canplay',start,{once:true});
+                            v.addEventListener('loadeddata',start,{once:true});
+                            start();
+                          </script>
+                        </body>
+                        </html>
+                        """.getBytes(StandardCharsets.UTF_8);
+            }
 
             Headers h = exchange.getResponseHeaders();
             h.set("Content-Type", "text/html; charset=utf-8");
@@ -176,6 +219,11 @@ final class LocalMediaServer implements AutoCloseable {
 
     private static String mimeType(String name) {
         String n = name.toLowerCase(Locale.ROOT);
+        if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "image/jpeg";
+        if (n.endsWith(".png")) return "image/png";
+        if (n.endsWith(".gif")) return "image/gif";
+        if (n.endsWith(".webp")) return "image/webp";
+        if (n.endsWith(".bmp")) return "image/bmp";
         if (n.endsWith(".webm")) return "video/webm";
         if (n.endsWith(".m4v")) return "video/x-m4v";
         if (n.endsWith(".mov")) return "video/quicktime";
