@@ -67,7 +67,7 @@ final class VideoSession {
                   const v=document.querySelector('video');
                   if(v){
                     v.style.cssText='position:fixed;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
-                    v.controls=false;
+                    v.controls=true;
                     v.autoplay=true;
                     v.loop=false;
                     v.volume=1.0;
